@@ -14,6 +14,8 @@ namespace clause {
 
         while (!is_at_end()) {
             token_start_ = current_;
+            token_start_line_ = line_;
+            token_start_column_ = column_;
             if (auto token = next_token()) {
                 tokens.push_back(std::move(*token));
             }
@@ -31,6 +33,8 @@ namespace clause {
         }
 
         token_start_ = current_;
+        token_start_line_ = line_;
+        token_start_column_ = column_;
         const char c = advance();
 
         // Numbers
@@ -72,7 +76,7 @@ namespace clause {
                     advance();
                     return make_token(TokenType::BangEqual);
                 }
-                break;
+                return make_token(TokenType::Bang);
             case '<':
                 if (peek() == '=') {
                     advance();
@@ -96,7 +100,7 @@ namespace clause {
                     advance();
                     return make_token(TokenType::DotDot);
                 }
-                break;
+                return make_token(TokenType::Dot);
             case '&':
                 if (peek() == '&') {
                     advance();
@@ -171,7 +175,7 @@ namespace clause {
     }
 
     Token Lexer::make_token(TokenType type, TokenValue value) const {
-        return {type, std::move(value), SourceLocation(filename_, line_, column_)};
+        return {type, std::move(value), SourceLocation(filename_, token_start_line_, token_start_column_)};
     }
 
     Token Lexer::number() {

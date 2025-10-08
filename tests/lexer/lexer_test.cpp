@@ -99,9 +99,11 @@ namespace clause {
 
         TEST_F(LexerTest, DoesNotTokenizeTrailingDotAsFloat) {
             const auto tokens = Tokenize("42.");
-            ASSERT_GE(tokens.size(), 2);
-            // Should be integer 42 followed by something else (not a float)
+            ASSERT_EQ(tokens.size(), 3);
+            // Should be integer 42 followed by a Dot token
             ExpectToken(tokens[0], 42LL);
+            ExpectToken(tokens[1], TokenType::Dot);
+            ExpectToken(tokens[2], TokenType::EndOfFile);
         }
 
         // =============================================================================================================
@@ -701,6 +703,179 @@ namespace clause {
             const auto tokens = lexer.tokenize();
             ASSERT_GE(tokens.size(), 1);
             EXPECT_EQ(tokens[0].location().filename, "my_file.clause");
+        }
+
+        TEST_F(LexerTest, TracksColumnNumbers) {
+            const auto tokens = Tokenize("let x = 42");
+            ASSERT_EQ(tokens.size(), 5);
+            EXPECT_EQ(tokens[0].location().column, 1);  // "let" starts at column 1
+            EXPECT_EQ(tokens[1].location().column, 5);  // "x" starts at column 5
+            EXPECT_EQ(tokens[2].location().column, 7);  // "=" starts at column 7
+            EXPECT_EQ(tokens[3].location().column, 9);  // "42" starts at column 9
+        }
+
+        TEST_F(LexerTest, TracksColumnNumbersWithMultiCharTokens) {
+            const auto tokens = Tokenize("== != <= >=");
+            ASSERT_EQ(tokens.size(), 5);
+            EXPECT_EQ(tokens[0].location().column, 1);  // "==" starts at column 1
+            EXPECT_EQ(tokens[1].location().column, 4);  // "!=" starts at column 4
+            EXPECT_EQ(tokens[2].location().column, 7);  // "<=" starts at column 7
+            EXPECT_EQ(tokens[3].location().column, 10); // ">=" starts at column 10
+        }
+
+        TEST_F(LexerTest, TracksColumnNumbersAcrossLines) {
+            const auto tokens = Tokenize("let x\n= 42");
+            ASSERT_EQ(tokens.size(), 5);
+            EXPECT_EQ(tokens[0].location().line, 1);
+            EXPECT_EQ(tokens[0].location().column, 1);  // "let" at line 1, column 1
+            EXPECT_EQ(tokens[1].location().line, 1);
+            EXPECT_EQ(tokens[1].location().column, 5);  // "x" at line 1, column 5
+            EXPECT_EQ(tokens[2].location().line, 2);
+            EXPECT_EQ(tokens[2].location().column, 1);  // "=" at line 2, column 1
+            EXPECT_EQ(tokens[3].location().line, 2);
+            EXPECT_EQ(tokens[3].location().column, 3);  // "42" at line 2, column 3
+        }
+
+        TEST_F(LexerTest, TracksColumnNumbersForStrings) {
+            const auto tokens = Tokenize("\"hello\" + \"world\"");
+            ASSERT_EQ(tokens.size(), 4);
+            EXPECT_EQ(tokens[0].location().column, 1);  // First string starts at column 1
+            EXPECT_EQ(tokens[1].location().column, 9);  // "+" starts at column 9
+            EXPECT_EQ(tokens[2].location().column, 11); // Second string starts at column 11
+        }
+
+        TEST_F(LexerTest, TracksColumnNumbersForNumbers) {
+            const auto tokens = Tokenize("123 + 456.789");
+            ASSERT_EQ(tokens.size(), 4);
+            EXPECT_EQ(tokens[0].location().column, 1);  // "123" starts at column 1
+            EXPECT_EQ(tokens[1].location().column, 5);  // "+" starts at column 5
+            EXPECT_EQ(tokens[2].location().column, 7);  // "456.789" starts at column 7
+        }
+
+        // =============================================================================================================
+        // Dot Token Tests
+        // =============================================================================================================
+
+        TEST_F(LexerTest, TokenizesSingleDot) {
+            const auto tokens = Tokenize(".");
+            ASSERT_EQ(tokens.size(), 2);
+            ExpectToken(tokens[0], TokenType::Dot);
+            ExpectToken(tokens[1], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesDotInMemberAccess) {
+            const auto tokens = Tokenize("obj.field");
+            ASSERT_EQ(tokens.size(), 4);
+            ExpectToken(tokens[0], TokenType::Identifier, std::string("obj"));
+            ExpectToken(tokens[1], TokenType::Dot);
+            ExpectToken(tokens[2], TokenType::Identifier, std::string("field"));
+            ExpectToken(tokens[3], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesChainedMemberAccess) {
+            const auto tokens = Tokenize("a.b.c");
+            ASSERT_EQ(tokens.size(), 6);
+            ExpectToken(tokens[0], TokenType::Identifier, std::string("a"));
+            ExpectToken(tokens[1], TokenType::Dot);
+            ExpectToken(tokens[2], TokenType::Identifier, std::string("b"));
+            ExpectToken(tokens[3], TokenType::Dot);
+            ExpectToken(tokens[4], TokenType::Identifier, std::string("c"));
+            ExpectToken(tokens[5], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, DistinguishesDotFromDotDot) {
+            const auto tokens = Tokenize(". ..");
+            ASSERT_EQ(tokens.size(), 3);
+            ExpectToken(tokens[0], TokenType::Dot);
+            ExpectToken(tokens[1], TokenType::DotDot);
+            ExpectToken(tokens[2], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesDotsInMethodCall) {
+            const auto tokens = Tokenize("obj.method()");
+            ASSERT_EQ(tokens.size(), 6);
+            ExpectToken(tokens[0], TokenType::Identifier, std::string("obj"));
+            ExpectToken(tokens[1], TokenType::Dot);
+            ExpectToken(tokens[2], TokenType::Identifier, std::string("method"));
+            ExpectToken(tokens[3], TokenType::LeftParen);
+            ExpectToken(tokens[4], TokenType::RightParen);
+            ExpectToken(tokens[5], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesFloatFollowedByDot) {
+            const auto tokens = Tokenize("3.14.round()");
+            ASSERT_EQ(tokens.size(), 6);
+            ExpectToken(tokens[0], 3.14);
+            ExpectToken(tokens[1], TokenType::Dot);
+            ExpectToken(tokens[2], TokenType::Identifier, std::string("round"));
+            ExpectToken(tokens[3], TokenType::LeftParen);
+            ExpectToken(tokens[4], TokenType::RightParen);
+            ExpectToken(tokens[5], TokenType::EndOfFile);
+        }
+
+        // =============================================================================================================
+        // Bang Token Tests
+        // =============================================================================================================
+
+        TEST_F(LexerTest, TokenizesSingleBang) {
+            const auto tokens = Tokenize("!");
+            ASSERT_EQ(tokens.size(), 2);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesBangInLogicalNot) {
+            const auto tokens = Tokenize("!true");
+            ASSERT_EQ(tokens.size(), 3);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::Identifier, std::string("true"));
+            ExpectToken(tokens[2], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesDoubleBang) {
+            const auto tokens = Tokenize("!!");
+            ASSERT_EQ(tokens.size(), 3);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::Bang);
+            ExpectToken(tokens[2], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, DistinguishesBangFromBangEqual) {
+            const auto tokens = Tokenize("! !=");
+            ASSERT_EQ(tokens.size(), 3);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::BangEqual);
+            ExpectToken(tokens[2], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesBangInExpression) {
+            const auto tokens = Tokenize("!(x == 5)");
+            ASSERT_EQ(tokens.size(), 7);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::LeftParen);
+            ExpectToken(tokens[2], TokenType::Identifier, std::string("x"));
+            ExpectToken(tokens[3], TokenType::EqualEqual);
+            ExpectToken(tokens[4], 5LL);
+            ExpectToken(tokens[5], TokenType::RightParen);
+            ExpectToken(tokens[6], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesMultipleBangs) {
+            const auto tokens = Tokenize("!!!value");
+            ASSERT_EQ(tokens.size(), 5);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::Bang);
+            ExpectToken(tokens[2], TokenType::Bang);
+            ExpectToken(tokens[3], TokenType::Identifier, std::string("value"));
+            ExpectToken(tokens[4], TokenType::EndOfFile);
+        }
+
+        TEST_F(LexerTest, TokenizesBangWithWhitespace) {
+            const auto tokens = Tokenize("! x");
+            ASSERT_EQ(tokens.size(), 3);
+            ExpectToken(tokens[0], TokenType::Bang);
+            ExpectToken(tokens[1], TokenType::Identifier, std::string("x"));
+            ExpectToken(tokens[2], TokenType::EndOfFile);
         }
     } // namespace
 } // namespace clause

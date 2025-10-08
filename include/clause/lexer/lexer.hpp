@@ -39,6 +39,8 @@ private:
     size_t line_ = 1;
     size_t column_ = 1;
     size_t token_start_ = 0;
+    size_t token_start_line_ = 1;
+    size_t token_start_column_ = 1;
     std::vector<Error> errors_;
 };
 

@@ -33,6 +33,7 @@ enum class TokenType {
     Slash,
     Equal,
     EqualEqual,
+    Bang,
     BangEqual,
     Less,
     LessEqual,
@@ -42,6 +43,7 @@ enum class TokenType {
     And,
     Pipe,
     Or,
+    Dot,
 
     // Delimiters
     LeftParen,
