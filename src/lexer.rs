@@ -246,14 +246,14 @@ impl Lexer {
         }
 
         // Decimal number (integer or float)
-        while self.current_char().is_ascii_digit() {
+        while self.current_char().is_ascii_digit() || self.current_char() == '_' {
             self.advance();
         }
 
         // Check for float
         if self.current_char() == '.' && self.peek_ahead(1).map_or(false, |c| c.is_ascii_digit()) {
             self.advance(); // consume '.'
-            while self.current_char().is_ascii_digit() {
+            while self.current_char().is_ascii_digit() || self.current_char() == '_' {
                 self.advance();
             }
 
@@ -293,7 +293,7 @@ impl Lexer {
             });
         }
 
-        while self.current_char().is_ascii_digit() {
+        while self.current_char().is_ascii_digit() || self.current_char() == '_' {
             self.advance();
         }
 
@@ -313,8 +313,17 @@ impl Lexer {
             });
         }
 
-        while self.current_char().is_ascii_hexdigit() {
+        while self.current_char().is_ascii_hexdigit() || self.current_char() == '_' {
             self.advance();
+        }
+
+        // Check if the next character would make an invalid hex literal
+        if self.current_char().is_ascii_alphanumeric() {
+            return Err(LexerError {
+                message: format!("Invalid character '{}' in hexadecimal literal", self.current_char()),
+                line: self.line,
+                column: self.column,
+            });
         }
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
@@ -334,8 +343,17 @@ impl Lexer {
             });
         }
 
-        while matches!(self.current_char(), '0' | '1') {
+        while matches!(self.current_char(), '0' | '1' | '_') {
             self.advance();
+        }
+
+        // Check if the next character would make an invalid binary literal
+        if self.current_char().is_ascii_alphanumeric() {
+            return Err(LexerError {
+                message: format!("Invalid character '{}' in binary literal", self.current_char()),
+                line: self.line,
+                column: self.column,
+            });
         }
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
@@ -355,8 +373,17 @@ impl Lexer {
             });
         }
 
-        while matches!(self.current_char(), '0'..='7') {
+        while matches!(self.current_char(), '0'..='7' | '_') {
             self.advance();
+        }
+
+        // Check if the next character would make an invalid octal literal
+        if self.current_char().is_ascii_alphanumeric() {
+            return Err(LexerError {
+                message: format!("Invalid character '{}' in octal literal", self.current_char()),
+                line: self.line,
+                column: self.column,
+            });
         }
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
@@ -489,5 +516,90 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::FloatLiteral);
         assert_eq!(tokens[1].kind, TokenKind::FloatLiteral);
+    }
+
+    #[test]
+    fn test_invalid_hex_literal() {
+        let mut lexer = Lexer::new("0xFG");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character 'G' in hexadecimal literal"));
+    }
+
+    #[test]
+    fn test_invalid_binary_literal() {
+        let mut lexer = Lexer::new("0b102");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character '2' in binary literal"));
+    }
+
+    #[test]
+    fn test_invalid_octal_literal() {
+        let mut lexer = Lexer::new("0o789");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character '8' in octal literal"));
+    }
+
+    #[test]
+    fn test_valid_literals_with_operators() {
+        // Make sure valid literals followed by operators still work
+        let mut lexer = Lexer::new("0xFF+0b1010");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[1].kind, TokenKind::Plus);
+        assert_eq!(tokens[2].kind, TokenKind::IntegerLiteral);
+    }
+
+    #[test]
+    fn test_decimal_with_underscores() {
+        let mut lexer = Lexer::new("1_000_000");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[0].lexeme, "1_000_000");
+    }
+
+    #[test]
+    fn test_hex_with_underscores() {
+        let mut lexer = Lexer::new("0xFF_AB_CD");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[0].lexeme, "0xFF_AB_CD");
+    }
+
+    #[test]
+    fn test_binary_with_underscores() {
+        let mut lexer = Lexer::new("0b1111_0000");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[0].lexeme, "0b1111_0000");
+    }
+
+    #[test]
+    fn test_octal_with_underscores() {
+        let mut lexer = Lexer::new("0o755_644");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[0].lexeme, "0o755_644");
+    }
+
+    #[test]
+    fn test_float_with_underscores() {
+        let mut lexer = Lexer::new("3.141_592 1_000.5e1_0");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::FloatLiteral);
+        assert_eq!(tokens[0].lexeme, "3.141_592");
+        assert_eq!(tokens[1].kind, TokenKind::FloatLiteral);
+        assert_eq!(tokens[1].lexeme, "1_000.5e1_0");
+    }
+
+    #[test]
+    fn test_hex_with_underscore_followed_by_invalid() {
+        // 0xFF_G should error on the G, not treat _ as part of the number
+        let mut lexer = Lexer::new("0xFF_G");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character 'G'"));
     }
 }

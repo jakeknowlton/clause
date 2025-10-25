@@ -135,35 +135,35 @@ BOOLEAN_LITERAL
     ;
 
 INTEGER_LITERAL
-    : DecimalLiteral
-    | HexLiteral
+    : HexLiteral
     | BinaryLiteral
     | OctalLiteral
+    | DecimalLiteral
     ;
 
 fragment DecimalLiteral
-    : [0-9]+
+    : [0-9] ([0-9_])*
     ;
 
 fragment HexLiteral
-    : '0' [xX] [0-9a-fA-F]+
+    : '0' [xX] [0-9a-fA-F] ([0-9a-fA-F_])*
     ;
 
 fragment BinaryLiteral
-    : '0' [bB] [01]+
+    : '0' [bB] [01] ([01_])*
     ;
 
 fragment OctalLiteral
-    : '0' [oO] [0-7]+
+    : '0' [oO] [0-7] ([0-7_])*
     ;
 
 FLOAT_LITERAL
-    : [0-9]+ '.' [0-9]+ Exponent?
-    | [0-9]+ Exponent
+    : [0-9] ([0-9_])* '.' [0-9] ([0-9_])* Exponent?
+    | [0-9] ([0-9_])* Exponent
     ;
 
 fragment Exponent
-    : [eE] [+\-]? [0-9]+
+    : [eE] [+\-]? [0-9] ([0-9_])*
     ;
 
 // Identifiers
