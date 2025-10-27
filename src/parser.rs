@@ -479,112 +479,136 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
 
-    #[test]
-    fn test_parse_simple_expression() {
-        let mut lexer = Lexer::new("42");
+    // ============================================================================
+    // Test Helper Functions
+    // ============================================================================
+
+    /// Parse a source string into a Program AST
+    fn parse(source: &str) -> Result<Program, ParseError> {
+        let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
+        parser.parse()
+    }
 
+    /// Parse source and extract the first statement
+    fn parse_first_stmt(source: &str) -> Statement {
+        let program = parse(source).unwrap();
+        assert!(!program.statements.is_empty(), "Program has no statements");
+        program.statements[0].clone()
+    }
+
+    /// Parse source and extract the first expression statement
+    fn parse_first_expr(source: &str) -> Expression {
+        match parse_first_stmt(source) {
+            Statement::Expression(expr) => expr,
+            _ => panic!("Expected expression statement"),
+        }
+    }
+
+    /// Parse source and extract the first variable declaration
+    fn parse_first_var_decl(source: &str) -> VariableDeclaration {
+        match parse_first_stmt(source) {
+            Statement::VariableDeclaration(decl) => decl,
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    /// Parse source and extract the first yield statement
+    fn parse_first_yield(source: &str) -> YieldStatement {
+        match parse_first_stmt(source) {
+            Statement::Yield(yield_stmt) => yield_stmt,
+            _ => panic!("Expected yield statement"),
+        }
+    }
+
+    /// Unwrap a Binary expression or panic
+    fn unwrap_binary(expr: Expression) -> Box<BinaryExpr> {
+        match expr {
+            Expression::Binary(binary) => binary,
+            _ => panic!("Expected binary expression, got: {:?}", expr),
+        }
+    }
+
+    /// Unwrap a Unary expression or panic
+    fn unwrap_unary(expr: Expression) -> Box<UnaryExpr> {
+        match expr {
+            Expression::Unary(unary) => unary,
+            _ => panic!("Expected unary expression, got: {:?}", expr),
+        }
+    }
+
+    /// Unwrap a Block expression or panic
+    fn unwrap_block(expr: Expression) -> Block {
+        match expr {
+            Expression::Block(block) => block,
+            _ => panic!("Expected block expression, got: {:?}", expr),
+        }
+    }
+
+    /// Unwrap a Grouping expression or panic
+    fn unwrap_grouping(expr: Expression) -> Box<Expression> {
+        match expr {
+            Expression::Grouping(grouped) => grouped,
+            _ => panic!("Expected grouping expression, got: {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_expression() {
+        let program = parse("42").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_binary_expression() {
-        let mut lexer = Lexer::new("1 + 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
+        let program = parse("1 + 2").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_variable_declaration() {
-        let mut lexer = Lexer::new("let x = 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        assert_eq!(program.statements.len(), 1);
-        match &program.statements[0] {
-            Statement::VariableDeclaration(decl) => {
-                assert_eq!(decl.name, "x");
-                assert!(decl.mutable);
-            }
-            _ => panic!("Expected variable declaration"),
-        }
+        let decl = parse_first_var_decl("let x = 42");
+        assert_eq!(decl.name, "x");
+        assert!(decl.mutable);
     }
 
     #[test]
     fn test_parse_integer_literal() {
-        let mut lexer = Lexer::new("42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Integer(val)) => {
-                assert_eq!(val, "42");
-            }
+        match parse_first_expr("42") {
+            Expression::Integer(val) => assert_eq!(val, "42"),
             _ => panic!("Expected integer literal"),
         }
     }
 
     #[test]
     fn test_parse_float_literal() {
-        let mut lexer = Lexer::new("3.14");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Float(val)) => {
-                assert_eq!(val, "3.14");
-            }
+        match parse_first_expr("3.14") {
+            Expression::Float(val) => assert_eq!(val, "3.14"),
             _ => panic!("Expected float literal"),
         }
     }
 
     #[test]
     fn test_parse_boolean_literal() {
-        let mut lexer = Lexer::new("true");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Boolean(val)) => {
-                assert!(*val);
-            }
+        match parse_first_expr("true") {
+            Expression::Boolean(val) => assert!(val),
             _ => panic!("Expected boolean literal"),
         }
     }
 
     #[test]
     fn test_parse_void_literal() {
-        let mut lexer = Lexer::new("void");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Void) => {}
+        match parse_first_expr("void") {
+            Expression::Void => {}
             _ => panic!("Expected void literal"),
         }
     }
 
     #[test]
     fn test_parse_identifier() {
-        let mut lexer = Lexer::new("myVar");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Identifier(name)) => {
-                assert_eq!(name, "myVar");
-            }
+        match parse_first_expr("myVar") {
+            Expression::Identifier(name) => assert_eq!(name, "myVar"),
             _ => panic!("Expected identifier"),
         }
     }
@@ -592,491 +616,218 @@ mod tests {
     #[test]
     fn test_parse_operator_precedence() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
-        let mut lexer = Lexer::new("1 + 2 * 3");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::Add);
-                // Right side should be multiplication
-                match &binary.right {
-                    Expression::Binary(right_binary) => {
-                        assert_eq!(right_binary.operator, BinaryOp::Multiply);
-                    }
-                    _ => panic!("Expected binary expression on right"),
-                }
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        let binary = unwrap_binary(parse_first_expr("1 + 2 * 3"));
+        assert_eq!(binary.operator, BinaryOp::Add);
+        // Right side should be multiplication
+        let right_binary = unwrap_binary(binary.right);
+        assert_eq!(right_binary.operator, BinaryOp::Multiply);
     }
 
     #[test]
     fn test_parse_grouping_overrides_precedence() {
         // (1 + 2) * 3 should parse as (1 + 2) * 3
-        let mut lexer = Lexer::new("(1 + 2) * 3");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::Multiply);
-                // Left side should be grouping with addition
-                match &binary.left {
-                    Expression::Grouping(grouped) => {
-                        match grouped.as_ref() {
-                            Expression::Binary(left_binary) => {
-                                assert_eq!(left_binary.operator, BinaryOp::Add);
-                            }
-                            _ => panic!("Expected binary expression in grouping"),
-                        }
-                    }
-                    _ => panic!("Expected grouping on left"),
-                }
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        let binary = unwrap_binary(parse_first_expr("(1 + 2) * 3"));
+        assert_eq!(binary.operator, BinaryOp::Multiply);
+        // Left side should be grouping with addition
+        let grouped = unwrap_grouping(binary.left);
+        let left_binary = unwrap_binary(*grouped);
+        assert_eq!(left_binary.operator, BinaryOp::Add);
     }
 
     #[test]
     fn test_parse_logical_operators() {
-        let mut lexer = Lexer::new("true && false || true");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                // Should parse as (true && false) || true
-                assert_eq!(binary.operator, BinaryOp::LogicalOr);
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        // Should parse as (true && false) || true
+        let binary = unwrap_binary(parse_first_expr("true && false || true"));
+        assert_eq!(binary.operator, BinaryOp::LogicalOr);
     }
 
     #[test]
     fn test_parse_bitwise_operators() {
-        let mut lexer = Lexer::new("1 & 2 | 3 ^ 4");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                // Should respect bitwise operator precedence
-                assert_eq!(binary.operator, BinaryOp::BitwiseOr);
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        // Should respect bitwise operator precedence
+        let binary = unwrap_binary(parse_first_expr("1 & 2 | 3 ^ 4"));
+        assert_eq!(binary.operator, BinaryOp::BitwiseOr);
     }
 
     #[test]
     fn test_parse_comparison_operators() {
-        let mut lexer = Lexer::new("1 < 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::LessThan);
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        let binary = unwrap_binary(parse_first_expr("1 < 2"));
+        assert_eq!(binary.operator, BinaryOp::LessThan);
     }
 
     #[test]
     fn test_parse_equality_operators() {
-        let mut lexer = Lexer::new("x == y");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::Equal);
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        let binary = unwrap_binary(parse_first_expr("x == y"));
+        assert_eq!(binary.operator, BinaryOp::Equal);
     }
 
     #[test]
     fn test_parse_shift_operators() {
-        let mut lexer = Lexer::new("1 << 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::LeftShift);
-            }
-            _ => panic!("Expected binary expression"),
-        }
+        let binary = unwrap_binary(parse_first_expr("1 << 2"));
+        assert_eq!(binary.operator, BinaryOp::LeftShift);
     }
 
     #[test]
     fn test_parse_unary_minus() {
-        let mut lexer = Lexer::new("-42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Unary(unary)) => {
-                assert_eq!(unary.operator, UnaryOp::Minus);
-                match &unary.operand {
-                    Expression::Integer(val) => assert_eq!(val, "42"),
-                    _ => panic!("Expected integer operand"),
-                }
-            }
-            _ => panic!("Expected unary expression"),
+        let unary = unwrap_unary(parse_first_expr("-42"));
+        assert_eq!(unary.operator, UnaryOp::Minus);
+        match unary.operand {
+            Expression::Integer(val) => assert_eq!(val, "42"),
+            _ => panic!("Expected integer operand"),
         }
     }
 
     #[test]
     fn test_parse_unary_not() {
-        let mut lexer = Lexer::new("!true");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Unary(unary)) => {
-                assert_eq!(unary.operator, UnaryOp::LogicalNot);
-            }
-            _ => panic!("Expected unary expression"),
-        }
+        let unary = unwrap_unary(parse_first_expr("!true"));
+        assert_eq!(unary.operator, UnaryOp::LogicalNot);
     }
 
     #[test]
     fn test_parse_unary_bitwise_not() {
-        let mut lexer = Lexer::new("~42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Unary(unary)) => {
-                assert_eq!(unary.operator, UnaryOp::BitwiseNot);
-            }
-            _ => panic!("Expected unary expression"),
-        }
+        let unary = unwrap_unary(parse_first_expr("~42"));
+        assert_eq!(unary.operator, UnaryOp::BitwiseNot);
     }
 
     #[test]
     fn test_parse_nested_unary() {
-        let mut lexer = Lexer::new("--42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Unary(outer)) => {
-                assert_eq!(outer.operator, UnaryOp::Minus);
-                match &outer.operand {
-                    Expression::Unary(inner) => {
-                        assert_eq!(inner.operator, UnaryOp::Minus);
-                    }
-                    _ => panic!("Expected nested unary"),
-                }
-            }
-            _ => panic!("Expected unary expression"),
-        }
+        let outer = unwrap_unary(parse_first_expr("--42"));
+        assert_eq!(outer.operator, UnaryOp::Minus);
+        let inner = unwrap_unary(outer.operand);
+        assert_eq!(inner.operator, UnaryOp::Minus);
     }
 
     #[test]
     fn test_parse_assignment() {
-        let mut lexer = Lexer::new("x = 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::Assign);
-                match &binary.left {
-                    Expression::Identifier(name) => assert_eq!(name, "x"),
-                    _ => panic!("Expected identifier on left"),
-                }
-            }
-            _ => panic!("Expected assignment"),
+        let binary = unwrap_binary(parse_first_expr("x = 42"));
+        assert_eq!(binary.operator, BinaryOp::Assign);
+        match binary.left {
+            Expression::Identifier(name) => assert_eq!(name, "x"),
+            _ => panic!("Expected identifier on left"),
         }
     }
 
     #[test]
     fn test_parse_compound_assignment() {
-        let mut lexer = Lexer::new("x += 5");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(binary)) => {
-                assert_eq!(binary.operator, BinaryOp::PlusAssign);
-            }
-            _ => panic!("Expected compound assignment"),
-        }
+        let binary = unwrap_binary(parse_first_expr("x += 5"));
+        assert_eq!(binary.operator, BinaryOp::PlusAssign);
     }
 
     #[test]
     fn test_parse_chained_assignment() {
-        // x = y = 5 should parse as x = (y = 5) with left associativity
-        let mut lexer = Lexer::new("x = y = 5");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Binary(outer)) => {
-                assert_eq!(outer.operator, BinaryOp::Assign);
-                // Due to left associativity, this parses as (x = y) = 5
-                match &outer.left {
-                    Expression::Identifier(_) => {}
-                    _ => {}
-                }
-            }
-            _ => panic!("Expected assignment"),
-        }
+        // x = y = 5 should parse as (x = y) = 5 with left associativity
+        let binary = unwrap_binary(parse_first_expr("x = y = 5"));
+        assert_eq!(binary.operator, BinaryOp::Assign);
     }
 
     #[test]
     fn test_parse_let_declaration() {
-        let mut lexer = Lexer::new("let x = 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::VariableDeclaration(decl) => {
-                assert_eq!(decl.name, "x");
-                assert!(decl.mutable);
-                assert!(decl.type_annotation.is_none());
-            }
-            _ => panic!("Expected variable declaration"),
-        }
+        let decl = parse_first_var_decl("let x = 42");
+        assert_eq!(decl.name, "x");
+        assert!(decl.mutable);
+        assert!(decl.type_annotation.is_none());
     }
 
     #[test]
     fn test_parse_fix_declaration() {
-        let mut lexer = Lexer::new("fix x = 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::VariableDeclaration(decl) => {
-                assert_eq!(decl.name, "x");
-                assert!(!decl.mutable);
-            }
-            _ => panic!("Expected variable declaration"),
-        }
+        let decl = parse_first_var_decl("fix x = 42");
+        assert_eq!(decl.name, "x");
+        assert!(!decl.mutable);
     }
 
     #[test]
     fn test_parse_declaration_with_type() {
-        let mut lexer = Lexer::new("let x: I32 = 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::VariableDeclaration(decl) => {
-                assert_eq!(decl.name, "x");
-                assert!(decl.mutable);
-                assert_eq!(decl.type_annotation, Some(Type::I32));
-            }
-            _ => panic!("Expected variable declaration"),
-        }
+        let decl = parse_first_var_decl("let x: I32 = 42");
+        assert_eq!(decl.name, "x");
+        assert!(decl.mutable);
+        assert_eq!(decl.type_annotation, Some(Type::I32));
     }
 
     #[test]
     fn test_parse_declaration_with_expression() {
-        let mut lexer = Lexer::new("let x = 1 + 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::VariableDeclaration(decl) => {
-                assert_eq!(decl.name, "x");
-                match &decl.initializer {
-                    Expression::Binary(binary) => {
-                        assert_eq!(binary.operator, BinaryOp::Add);
-                    }
-                    _ => panic!("Expected binary expression"),
-                }
-            }
-            _ => panic!("Expected variable declaration"),
-        }
+        let decl = parse_first_var_decl("let x = 1 + 2");
+        assert_eq!(decl.name, "x");
+        let binary = unwrap_binary(decl.initializer);
+        assert_eq!(binary.operator, BinaryOp::Add);
     }
 
     #[test]
     fn test_parse_empty_block() {
-        let mut lexer = Lexer::new("{}");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Block(block)) => {
-                assert_eq!(block.statements.len(), 0);
-            }
-            _ => panic!("Expected block expression"),
-        }
+        let block = unwrap_block(parse_first_expr("{}"));
+        assert_eq!(block.statements.len(), 0);
     }
 
     #[test]
     fn test_parse_block_with_statements() {
-        let mut lexer = Lexer::new("{ let x = 5\nlet y = 10 }");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Block(block)) => {
-                assert_eq!(block.statements.len(), 2);
-            }
-            _ => panic!("Expected block expression"),
-        }
+        let block = unwrap_block(parse_first_expr("{ let x = 5\nlet y = 10 }"));
+        assert_eq!(block.statements.len(), 2);
     }
 
     #[test]
     fn test_parse_block_with_yield() {
-        let mut lexer = Lexer::new("{ let x = 5\n<- x * 2 }");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Block(block)) => {
-                assert_eq!(block.statements.len(), 2);
-                match &block.statements[1] {
-                    Statement::Yield(_) => {}
-                    _ => panic!("Expected yield statement"),
-                }
-            }
-            _ => panic!("Expected block expression"),
+        let block = unwrap_block(parse_first_expr("{ let x = 5\n<- x * 2 }"));
+        assert_eq!(block.statements.len(), 2);
+        match &block.statements[1] {
+            Statement::Yield(_) => {}
+            _ => panic!("Expected yield statement"),
         }
     }
 
     #[test]
     fn test_parse_nested_blocks() {
-        let mut lexer = Lexer::new("{ { 42 } }");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Expression(Expression::Block(outer)) => {
-                assert_eq!(outer.statements.len(), 1);
-                match &outer.statements[0] {
-                    Statement::Expression(Expression::Block(_)) => {}
-                    _ => panic!("Expected nested block"),
-                }
-            }
-            _ => panic!("Expected block expression"),
+        let outer = unwrap_block(parse_first_expr("{ { 42 } }"));
+        assert_eq!(outer.statements.len(), 1);
+        match &outer.statements[0] {
+            Statement::Expression(Expression::Block(_)) => {}
+            _ => panic!("Expected nested block"),
         }
     }
 
     #[test]
     fn test_parse_yield_statement() {
-        let mut lexer = Lexer::new("<- 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Yield(yield_stmt) => {
-                match &yield_stmt.value {
-                    Expression::Integer(val) => assert_eq!(val, "42"),
-                    _ => panic!("Expected integer in yield"),
-                }
-            }
-            _ => panic!("Expected yield statement"),
+        let yield_stmt = parse_first_yield("<- 42");
+        match yield_stmt.value {
+            Expression::Integer(val) => assert_eq!(val, "42"),
+            _ => panic!("Expected integer in yield"),
         }
     }
 
     #[test]
     fn test_parse_yield_with_expression() {
-        let mut lexer = Lexer::new("<- x + y");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
-        match &program.statements[0] {
-            Statement::Yield(yield_stmt) => {
-                match &yield_stmt.value {
-                    Expression::Binary(binary) => {
-                        assert_eq!(binary.operator, BinaryOp::Add);
-                    }
-                    _ => panic!("Expected binary expression in yield"),
-                }
-            }
-            _ => panic!("Expected yield statement"),
-        }
+        let yield_stmt = parse_first_yield("<- x + y");
+        let binary = unwrap_binary(yield_stmt.value);
+        assert_eq!(binary.operator, BinaryOp::Add);
     }
 
     #[test]
     fn test_parse_multiple_statements() {
-        let mut lexer = Lexer::new("let x = 5\nlet y = 10\nx + y");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
+        let program = parse("let x = 5\nlet y = 10\nx + y").unwrap();
         assert_eq!(program.statements.len(), 3);
     }
 
     #[test]
     fn test_parse_complex_expression() {
-        let mut lexer = Lexer::new("1 + 2 * 3 - 4 / 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-
         // Just verify it parses without error
+        let program = parse("1 + 2 * 3 - 4 / 2").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_error_missing_expression() {
-        let mut lexer = Lexer::new("let x =");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-
-        assert!(result.is_err());
+        assert!(parse("let x =").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_equals() {
-        let mut lexer = Lexer::new("let x 42");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-
-        assert!(result.is_err());
+        assert!(parse("let x 42").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_paren() {
-        let mut lexer = Lexer::new("(1 + 2");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-
-        assert!(result.is_err());
+        assert!(parse("(1 + 2").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_block() {
-        let mut lexer = Lexer::new("{ let x = 5");
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-
-        assert!(result.is_err());
+        assert!(parse("{ let x = 5").is_err());
     }
 }
