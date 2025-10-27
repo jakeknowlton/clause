@@ -262,6 +262,8 @@ impl Lexer {
                 self.lex_exponent()?;
             }
 
+            self.validate_literal_end("float")?;
+
             let lexeme: String = self.input[start_pos..self.position].iter().collect();
             return Ok(Token::new(TokenKind::FloatLiteral, lexeme, line, column));
         }
@@ -269,9 +271,13 @@ impl Lexer {
         // Check for exponent (makes it a float)
         if matches!(self.current_char(), 'e' | 'E') {
             self.lex_exponent()?;
+            self.validate_literal_end("float")?;
+
             let lexeme: String = self.input[start_pos..self.position].iter().collect();
             return Ok(Token::new(TokenKind::FloatLiteral, lexeme, line, column));
         }
+
+        self.validate_literal_end("decimal")?;
 
         // Integer literal
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
@@ -317,14 +323,7 @@ impl Lexer {
             self.advance();
         }
 
-        // Check if the next character would make an invalid hex literal
-        if self.current_char().is_ascii_alphanumeric() {
-            return Err(LexerError {
-                message: format!("Invalid character '{}' in hexadecimal literal", self.current_char()),
-                line: self.line,
-                column: self.column,
-            });
-        }
+        self.validate_literal_end("hexadecimal")?;
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
         Ok(Token::new(TokenKind::IntegerLiteral, lexeme, line, column))
@@ -347,14 +346,7 @@ impl Lexer {
             self.advance();
         }
 
-        // Check if the next character would make an invalid binary literal
-        if self.current_char().is_ascii_alphanumeric() {
-            return Err(LexerError {
-                message: format!("Invalid character '{}' in binary literal", self.current_char()),
-                line: self.line,
-                column: self.column,
-            });
-        }
+        self.validate_literal_end("binary")?;
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
         Ok(Token::new(TokenKind::IntegerLiteral, lexeme, line, column))
@@ -377,14 +369,7 @@ impl Lexer {
             self.advance();
         }
 
-        // Check if the next character would make an invalid octal literal
-        if self.current_char().is_ascii_alphanumeric() {
-            return Err(LexerError {
-                message: format!("Invalid character '{}' in octal literal", self.current_char()),
-                line: self.line,
-                column: self.column,
-            });
-        }
+        self.validate_literal_end("octal")?;
 
         let lexeme: String = self.input[start_pos..self.position].iter().collect();
         Ok(Token::new(TokenKind::IntegerLiteral, lexeme, line, column))
@@ -484,6 +469,21 @@ impl Lexer {
 
     fn is_at_end(&self) -> bool {
         self.position >= self.input.len()
+    }
+
+    /// Validates that the current character doesn't make a literal invalid.
+    /// Returns an error if the current character is alphanumeric (which would indicate
+    /// an attempt to create an invalid identifier starting with a number or a malformed literal).
+    fn validate_literal_end(&self, literal_type: &str) -> Result<(), LexerError> {
+        if self.current_char().is_ascii_alphanumeric() {
+            Err(LexerError {
+                message: format!("Invalid character '{}' in {} literal", self.current_char(), literal_type),
+                line: self.line,
+                column: self.column,
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -601,5 +601,39 @@ mod tests {
         let result = lexer.tokenize();
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Invalid character 'G'"));
+    }
+
+    #[test]
+    fn test_invalid_decimal_with_letters() {
+        let mut lexer = Lexer::new("12abc");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character 'a' in decimal literal"));
+    }
+
+    #[test]
+    fn test_invalid_float_with_letters() {
+        let mut lexer = Lexer::new("3.14abc");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character 'a' in float literal"));
+    }
+
+    #[test]
+    fn test_invalid_float_exponent_with_letters() {
+        let mut lexer = Lexer::new("1e10abc");
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Invalid character 'a' in float literal"));
+    }
+
+    #[test]
+    fn test_valid_number_followed_by_operator() {
+        // Make sure numbers followed by operators still work
+        let mut lexer = Lexer::new("42+3.14");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::IntegerLiteral);
+        assert_eq!(tokens[1].kind, TokenKind::Plus);
+        assert_eq!(tokens[2].kind, TokenKind::FloatLiteral);
     }
 }
