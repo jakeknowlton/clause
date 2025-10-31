@@ -16,18 +16,6 @@ impl Interpreter {
         }
     }
 
-    pub fn with_environment(environment: Environment) -> Self {
-        Interpreter { environment }
-    }
-
-    pub fn environment(&self) -> &Environment {
-        &self.environment
-    }
-
-    pub fn environment_mut(&mut self) -> &mut Environment {
-        &mut self.environment
-    }
-
     pub fn execute_program(&mut self, program: &Program) -> Result<Value, String> {
         let mut last_value = Value::Void;
         for statement in &program.statements {
@@ -48,11 +36,15 @@ impl Interpreter {
         &mut self,
         var_decl: &VariableDeclaration,
     ) -> Result<Value, String> {
-        let mut value = self.evaluate_expression(&var_decl.initializer)?;
+        // Evaluate the initializer with the type annotation as context
+        let value = self.evaluate_expression_with_type(
+            &var_decl.initializer,
+            var_decl.type_annotation.as_ref(),
+        )?;
 
-        // Type annotation checking and conversion (if present)
+        // Type annotation checking (no conversion, must match exactly)
         if let Some(type_annotation) = &var_decl.type_annotation {
-            value = self.check_type(&value, type_annotation)?;
+            self.check_type(&value, type_annotation)?;
         }
 
         let mutable = var_decl.mutable;
@@ -70,36 +62,10 @@ impl Interpreter {
         use crate::ast::Type;
 
         match (value, type_annotation) {
-            (
-                Value::SignedInt {
-                    value: val,
-                    bits: value_bits,
-                },
-                Type::Signed(type_bits),
-            ) => {
-                if value_bits == type_bits {
-                    Ok(value.clone())
-                } else {
-                    // Convert to the specified bitwidth with validation
-                    // TODO: Remove automatic conversion
-                    Value::new_signed(*val, *type_bits)
-                }
-            }
-            (
-                Value::UnsignedInt {
-                    value: val,
-                    bits: value_bits,
-                },
-                Type::Unsigned(type_bits),
-            ) => {
-                if value_bits == type_bits {
-                    Ok(value.clone())
-                } else {
-                    // Convert to the specified bitwidth with validation
-                    // TODO: Remove automatic conversion
-                    Value::new_unsigned(*val, *type_bits)
-                }
-            }
+            (Value::SignedInt { bits: value_bits, .. }, Type::Signed(type_bits))
+                if value_bits == type_bits => Ok(value.clone()),
+            (Value::UnsignedInt { bits: value_bits, .. }, Type::Unsigned(type_bits))
+                if value_bits == type_bits => Ok(value.clone()),
             (Value::Single(_), Type::F32) => Ok(value.clone()),
             (Value::Double(_), Type::F64) => Ok(value.clone()),
             (Value::Boolean(_), Type::Bool) => Ok(value.clone()),
@@ -113,56 +79,104 @@ impl Interpreter {
         }
     }
 
-    /// Evaluate an expression to a value
     pub fn evaluate_expression(&mut self, expression: &Expression) -> Result<Value, String> {
+        self.evaluate_expression_with_type(expression, None)
+    }
+
+    fn evaluate_expression_with_type(
+        &mut self,
+        expression: &Expression,
+        expected_type: Option<&crate::ast::Type>,
+    ) -> Result<Value, String> {
+        use crate::ast::Type;
+
         match expression {
-            Expression::Integer(s) => self.parse_integer(s),
-            Expression::Float(s) => self.parse_float(s),
+            Expression::Integer(s) => {
+                // Use expected type to determine signedness and bitwidth
+                match expected_type {
+                    Some(Type::Signed(bits)) => self.parse_integer(s, true, Some(*bits)),
+                    Some(Type::Unsigned(bits)) => self.parse_integer(s, false, Some(*bits)),
+                    _ => self.parse_integer(s, true, None), // Default: signed i64
+                }
+            }
+            Expression::Float(s) => {
+                // Use expected type to determine float width
+                match expected_type {
+                    Some(Type::F32) => self.parse_float(s, Some(32)),
+                    Some(Type::F64) => self.parse_float(s, Some(64)),
+                    _ => self.parse_float(s, None), // Default: f64
+                }
+            }
             Expression::Boolean(b) => Ok(Value::Boolean(*b)),
             Expression::Void => Ok(Value::Void),
             Expression::Identifier(name) => self.environment.get(name),
-            Expression::Binary(binary) => self.evaluate_binary(binary),
-            Expression::Unary(unary) => self.evaluate_unary(unary),
-            Expression::Block(block) => self.evaluate_block(block),
-            Expression::Grouping(expr) => self.evaluate_expression(expr),
+            Expression::Binary(binary) => self.evaluate_binary_with_type(binary, expected_type),
+            Expression::Unary(unary) => self.evaluate_unary_with_type(unary, expected_type),
+            Expression::Block(block) => self.evaluate_block_with_type(block, expected_type),
+            Expression::Grouping(expr) => self.evaluate_expression_with_type(expr, expected_type),
         }
     }
 
     /// Parse an integer literal (handles all formats and underscores)
     /// Defaults to 64-bit signed integers for untyped literals
-    fn parse_integer(&self, s: &str) -> Result<Value, String> {
+    fn parse_integer(&self, s: &str, signed: bool, bits: Option<u8>) -> Result<Value, String> {
         let s = s.replace('_', "");
 
-        let result = if s.starts_with("0x") || s.starts_with("0X") {
-            i128::from_str_radix(&s[2..], 16)
-        } else if s.starts_with("0b") || s.starts_with("0B") {
-            i128::from_str_radix(&s[2..], 2)
-        } else if s.starts_with("0o") || s.starts_with("0O") {
-            i128::from_str_radix(&s[2..], 8)
-        } else {
-            s.parse::<i128>()
-        };
+        let bits = bits.unwrap_or(64);
 
-        let value = result.map_err(|e| format!("Invalid integer literal: {}", e))?;
-        Value::new_signed(value, 64)
+        if signed {
+            let result = if s.starts_with("0x") || s.starts_with("0X") {
+                i128::from_str_radix(&s[2..], 16)
+            } else if s.starts_with("0b") || s.starts_with("0B") {
+                i128::from_str_radix(&s[2..], 2)
+            } else if s.starts_with("0o") || s.starts_with("0O") {
+                i128::from_str_radix(&s[2..], 8)
+            } else {
+                s.parse::<i128>()
+            };
+
+            let value = result.map_err(|e| format!("Invalid integer literal: {}", e))?;
+            Value::new_signed(value, bits)
+        } else {
+            let result = if s.starts_with("0x") || s.starts_with("0X") {
+                u128::from_str_radix(&s[2..], 16)
+            } else if s.starts_with("0b") || s.starts_with("0B") {
+                u128::from_str_radix(&s[2..], 2)
+            } else if s.starts_with("0o") || s.starts_with("0O") {
+                u128::from_str_radix(&s[2..], 8)
+            } else {
+                s.parse::<u128>()
+            };
+
+            let value = result.map_err(|e| format!("Invalid integer literal: {}", e))?;
+            Value::new_unsigned(value, bits)
+        }
     }
 
-    // Defaults to 64-bit float for untyped literals
-    fn parse_float(&self, s: &str) -> Result<Value, String> {
+    fn parse_float(&self, s: &str, bits: Option<u8>) -> Result<Value, String> {
         let s = s.replace('_', "");
+        let bits = bits.unwrap_or(64);
+
         let value = s
             .parse::<f64>()
             .map_err(|e| format!("Invalid float literal: {}", e))?;
-        Ok(Value::Double(value))
+
+        match bits {
+            32 => Ok(Value::Single(value as f32)),
+            64 => Ok(Value::Double(value)),
+            _ => Err(format!("Invalid float bitwidth: {}", bits)),
+        }
     }
 
-    fn evaluate_binary(&mut self, binary: &BinaryExpr) -> Result<Value, String> {
-        // Handle assignment operators
+    fn evaluate_binary_with_type(
+        &mut self,
+        binary: &BinaryExpr,
+        expected_type: Option<&crate::ast::Type>,
+    ) -> Result<Value, String> {
         if self.is_assignment_operator(&binary.operator) {
             return self.evaluate_assignment_binary(binary);
         }
 
-        // Handle short-circuit evaluation for logical operators
         match binary.operator {
             BinaryOp::LogicalAnd => {
                 let left = self.evaluate_expression(&binary.left)?;
@@ -193,9 +207,25 @@ impl Interpreter {
                 }
             }
             _ => {
-                // For all other operators, evaluate both sides first
-                let left = self.evaluate_expression(&binary.left)?;
-                let right = self.evaluate_expression(&binary.right)?;
+                // For arithmetic and bitwise operators, propagate expected type to both operands
+                // For comparison operators, don't propagate (they return bool)
+                let propagate_type = matches!(
+                    binary.operator,
+                    BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide
+                        | BinaryOp::Modulo
+                        | BinaryOp::BitwiseAnd
+                        | BinaryOp::BitwiseOr
+                        | BinaryOp::BitwiseXor
+                        | BinaryOp::LeftShift
+                        | BinaryOp::RightShift
+                );
+
+                let type_hint = if propagate_type { expected_type } else { None };
+                let left = self.evaluate_expression_with_type(&binary.left, type_hint)?;
+                let right = self.evaluate_expression_with_type(&binary.right, type_hint)?;
                 self.apply_binary_operator(&binary.operator, &left, &right)
             }
         }
@@ -342,9 +372,19 @@ impl Interpreter {
         }
     }
 
-    /// Evaluate a unary expression
-    fn evaluate_unary(&mut self, unary: &UnaryExpr) -> Result<Value, String> {
-        let operand = self.evaluate_expression(&unary.operand)?;
+    fn evaluate_unary_with_type(
+        &mut self,
+        unary: &UnaryExpr,
+        expected_type: Option<&crate::ast::Type>,
+    ) -> Result<Value, String> {
+        // Propagate expected type for Plus, Minus, and BitwiseNot
+        // Don't propagate for LogicalNot (expects Bool)
+        let type_hint = match unary.operator {
+            UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitwiseNot => expected_type,
+            UnaryOp::LogicalNot => None,
+        };
+
+        let operand = self.evaluate_expression_with_type(&unary.operand, type_hint)?;
         match unary.operator {
             UnaryOp::Plus => Ok(operand),
             UnaryOp::Minus => operand.negate(),
@@ -353,16 +393,29 @@ impl Interpreter {
         }
     }
 
-    /// Evaluate a block expression
-    fn evaluate_block(&mut self, block: &Block) -> Result<Value, String> {
+    fn evaluate_block_with_type(
+        &mut self,
+        block: &Block,
+        _expected_type: Option<&crate::ast::Type>,
+    ) -> Result<Value, String> {
         // Push a new scope for the block
         self.environment.push_scope();
 
         let mut result = Value::Void;
 
-        // Execute each statement in the block
+        // Execute statements until we hit a yield, which acts as a break
         for statement in &block.statements {
-            result = self.execute_statement(statement)?;
+            match statement {
+                Statement::Yield(yield_stmt) => {
+                    // Yield acts as a break - evaluate and return immediately
+                    result = self.evaluate_expression(&yield_stmt.value)?;
+                    break;
+                }
+                _ => {
+                    // For other statements, execute normally
+                    self.execute_statement(statement)?;
+                }
+            }
         }
 
         // Pop the block's scope
@@ -784,11 +837,10 @@ mod tests {
     fn test_unsigned_negative_value_error() {
         let result = interpret("let x: u32 = -5");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Cannot assign negative integer")
-        );
+        let err = result.unwrap_err();
+        // Error is "Cannot negate U32" because the literal 5 is parsed as U32 due to
+        // type context, and unsigned values cannot be negated
+        assert!(err.contains("Cannot negate"));
     }
 
     #[test]
@@ -820,5 +872,42 @@ mod tests {
         let result = interpret("let x: i32 = 10\nlet y: u32 = 20\nx + y");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Cannot add"));
+    }
+
+    #[test]
+    fn test_f32_with_expression() {
+        let source = "let f: F32 = 1.0 + 2.0\nf";
+        assert_eq!(interpret(source).unwrap(), Value::Single(3.0));
+    }
+
+    #[test]
+    fn test_yield_acts_as_break() {
+        // First yield should be returned, subsequent statements should not execute
+        let source = "{\n  let x = 10\n  <- x\n  let y = 20\n  <- y\n}";
+        assert_eq!(
+            interpret(source).unwrap(),
+            Value::SignedInt {
+                value: 10,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_yield_prevents_side_effects() {
+        // Variable declaration after yield should not execute
+        let source = "let a = 5\n{\n  <- a\n  let b = 10\n}\nb";
+        let result = interpret(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Undefined variable"));
+    }
+
+    #[test]
+    fn test_block_with_no_yield_evaluates_to_void() {
+        // Variable declaration after yield should not execute
+        let source = "{ let x = 10\nlet y = 30 }";
+        let result = interpret(source);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::Void);
     }
 }
