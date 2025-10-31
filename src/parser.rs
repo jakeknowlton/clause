@@ -276,7 +276,12 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expression, ParseError> {
-        if self.match_tokens(&[TokenKind::Plus, TokenKind::Minus, TokenKind::Not, TokenKind::BNot]) {
+        if self.match_tokens(&[
+            TokenKind::Plus,
+            TokenKind::Minus,
+            TokenKind::Not,
+            TokenKind::BNot,
+        ]) {
             let operator = self.token_to_unary_op(&self.previous())?;
             let operand = self.unary()?;
             return Ok(Expression::Unary(Box::new(UnaryExpr { operator, operand })));
@@ -348,29 +353,63 @@ impl Parser {
                 return Err(ParseError {
                     message: "Expected type name".to_string(),
                     token,
-                })
+                });
             }
         };
 
         let ty = match type_name.as_str() {
-            "I8" => Type::I8,
-            "I16" => Type::I16,
-            "I32" => Type::I32,
-            "I64" => Type::I64,
-            "U8" => Type::U8,
-            "U16" => Type::U16,
-            "U32" => Type::U32,
-            "U64" => Type::U64,
-            "F16" => Type::F16,
+            // Float types
             "F32" => Type::F32,
             "F64" => Type::F64,
             "Bool" => Type::Bool,
             "Void" => Type::Void,
             _ => {
-                return Err(ParseError {
-                    message: format!("Unknown type: {}", type_name),
-                    token,
-                })
+                if type_name.starts_with('i') {
+                    let bits_str = &type_name[1..];
+                    match bits_str.parse::<u8>() {
+                        Ok(bits) if bits >= 1 && bits <= 128 => Type::Signed(bits),
+                        Ok(bits) => {
+                            return Err(ParseError {
+                                message: format!(
+                                    "Integer bitwidth must be between 1 and 128, found {}",
+                                    bits
+                                ),
+                                token,
+                            });
+                        }
+                        Err(_) => {
+                            return Err(ParseError {
+                                message: format!("Invalid signed integer type: {}", type_name),
+                                token,
+                            });
+                        }
+                    }
+                } else if type_name.starts_with('u') {
+                    let bits_str = &type_name[1..];
+                    match bits_str.parse::<u8>() {
+                        Ok(bits) if bits >= 1 && bits <= 128 => Type::Unsigned(bits),
+                        Ok(bits) => {
+                            return Err(ParseError {
+                                message: format!(
+                                    "Integer bitwidth must be between 1 and 128, found {}",
+                                    bits
+                                ),
+                                token,
+                            });
+                        }
+                        Err(_) => {
+                            return Err(ParseError {
+                                message: format!("Invalid unsigned integer type: {}", type_name),
+                                token,
+                            });
+                        }
+                    }
+                } else {
+                    return Err(ParseError {
+                        message: format!("Unknown type: {}", type_name),
+                        token,
+                    });
+                }
             }
         };
 
@@ -736,10 +775,10 @@ mod tests {
 
     #[test]
     fn test_parse_declaration_with_type() {
-        let decl = parse_first_var_decl("let x: I32 = 42");
+        let decl = parse_first_var_decl("let x: i32 = 42");
         assert_eq!(decl.name, "x");
         assert!(decl.mutable);
-        assert_eq!(decl.type_annotation, Some(Type::I32));
+        assert_eq!(decl.type_annotation, Some(Type::Signed(32)));
     }
 
     #[test]

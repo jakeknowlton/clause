@@ -123,15 +123,8 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    I8,
-    I16,
-    I32,
-    I64,
-    U8,
-    U16,
-    U32,
-    U64,
-    F16,
+    Signed(u8),   // i1 through i128
+    Unsigned(u8), // u1 through u128
     F32,
     F64,
     Bool,
@@ -140,7 +133,14 @@ pub enum Type {
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Type::Signed(bits) => write!(f, "i{}", bits),
+            Type::Unsigned(bits) => write!(f, "u{}", bits),
+            Type::F32 => write!(f, "F32"),
+            Type::F64 => write!(f, "F64"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Void => write!(f, "Void"),
+        }
     }
 }
 
@@ -189,7 +189,9 @@ impl fmt::Display for Expression {
             Expression::Boolean(val) => write!(f, "{}", val),
             Expression::Void => write!(f, "void"),
             Expression::Identifier(name) => write!(f, "{}", name),
-            Expression::Binary(binary) => write!(f, "({} {} {})", binary.left, binary.operator, binary.right),
+            Expression::Binary(binary) => {
+                write!(f, "({} {} {})", binary.left, binary.operator, binary.right)
+            }
             Expression::Unary(unary) => write!(f, "({}{})", unary.operator, unary.operand),
             Expression::Block(block) => write!(f, "{}", block),
             Expression::Grouping(expr) => write!(f, "({})", expr),

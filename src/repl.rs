@@ -1,17 +1,22 @@
+use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use std::io::{self, Write};
 
 pub struct Repl {
+    interpreter: Interpreter,
     show_tokens: bool,
     show_ast: bool,
+    show_result: bool,
 }
 
 impl Repl {
     pub fn new() -> Self {
         Self {
+            interpreter: Interpreter::new(),
             show_tokens: false,
-            show_ast: true,
+            show_ast: false,
+            show_result: true,
         }
     }
 
@@ -36,7 +41,7 @@ impl Repl {
             let mut line = String::new();
             match io::stdin().read_line(&mut line) {
                 Ok(0) => break, // EOF
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(err) => {
                     eprintln!("Error reading input: {}", err);
                     continue;
@@ -84,7 +89,7 @@ impl Repl {
         println!("Goodbye!");
     }
 
-    fn execute(&self, input: &str) {
+    fn execute(&mut self, input: &str) {
         if input.trim().is_empty() {
             return;
         }
@@ -122,8 +127,17 @@ impl Repl {
             println!("{}", program);
         }
 
-        // TODO: Add interpreter/evaluator here
-        println!("(evaluation not yet implemented)");
+        // Interpretation
+        match self.interpreter.execute_program(&program) {
+            Ok(value) => {
+                if self.show_result {
+                    println!("{}", value);
+                }
+            }
+            Err(err) => {
+                eprintln!("Runtime error: {}", err);
+            }
+        }
     }
 
     fn handle_command(&mut self, command: &str) -> Result<bool, String> {
@@ -153,7 +167,20 @@ impl Repl {
                 println!("AST display disabled");
                 Ok(true)
             }
-            _ => Err(format!("Unknown command: {}. Type ':help' for available commands.", command)),
+            ":result on" => {
+                self.show_result = true;
+                println!("Result display enabled");
+                Ok(true)
+            }
+            ":result off" => {
+                self.show_result = false;
+                println!("Result display disabled");
+                Ok(true)
+            }
+            _ => Err(format!(
+                "Unknown command: {}. Type ':help' for available commands.",
+                command
+            )),
         }
     }
 
@@ -163,6 +190,7 @@ impl Repl {
         println!("  :quit, :q, :exit   Exit the REPL");
         println!("  :tokens on/off     Toggle token display");
         println!("  :ast on/off        Toggle AST display");
+        println!("  :result on/off     Toggle result display");
         println!();
         println!("Usage:");
         println!("  - Type expressions or statements and press Enter");
@@ -171,11 +199,16 @@ impl Repl {
         println!();
         println!("Examples:");
         println!("  >>> 1 + 2");
+        println!("  3");
         println!("  >>> let x = 42");
+        println!("  42");
+        println!("  >>> x * 2");
+        println!("  84");
         println!("  >>> let y = {{");
         println!("  ...   let a = 10");
         println!("  ...   <- a * 2");
         println!("  ... }}");
+        println!("  20");
     }
 }
 

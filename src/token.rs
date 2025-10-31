@@ -45,55 +45,55 @@ pub enum TokenKind {
     Identifier,
 
     // Assignment operators
-    Assign,         // =
-    PlusAssign,     // +=
-    MinusAssign,    // -=
-    MultAssign,     // *=
-    DivAssign,      // /=
-    ModAssign,      // %=
-    AndAssign,      // &=
-    OrAssign,       // |=
-    XorAssign,      // ^=
-    LShiftAssign,   // <<=
-    RShiftAssign,   // >>=
+    Assign,       // =
+    PlusAssign,   // +=
+    MinusAssign,  // -=
+    MultAssign,   // *=
+    DivAssign,    // /=
+    ModAssign,    // %=
+    AndAssign,    // &=
+    OrAssign,     // |=
+    XorAssign,    // ^=
+    LShiftAssign, // <<=
+    RShiftAssign, // >>=
 
     // Comparison operators
-    Eq,             // ==
-    Ne,             // !=
-    Lt,             // <
-    Le,             // <=
-    Gt,             // >
-    Ge,             // >=
+    Eq, // ==
+    Ne, // !=
+    Lt, // <
+    Le, // <=
+    Gt, // >
+    Ge, // >=
 
     // Logical operators
-    LAnd,           // &&
-    LOr,            // ||
-    Not,            // !
+    LAnd, // &&
+    LOr,  // ||
+    Not,  // !
 
     // Bitwise operators
-    And,            // &
-    Or,             // |
-    Xor,            // ^
-    BNot,           // ~
-    LShift,         // <<
-    RShift,         // >>
+    And,    // &
+    Or,     // |
+    Xor,    // ^
+    BNot,   // ~
+    LShift, // <<
+    RShift, // >>
 
     // Arithmetic operators
-    Plus,           // +
-    Minus,          // -
-    Mult,           // *
-    Div,            // /
-    Mod,            // %
+    Plus,  // +
+    Minus, // -
+    Mult,  // *
+    Div,   // /
+    Mod,   // %
 
     // Yield operator
-    Yield,          // <-
+    Yield, // <-
 
     // Delimiters
-    LParen,         // (
-    RParen,         // )
-    LBrace,         // {
-    RBrace,         // }
-    Colon,          // :
+    LParen, // (
+    RParen, // )
+    LBrace, // {
+    RBrace, // }
+    Colon,  // :
 
     // Special
     Eof,

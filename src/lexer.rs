@@ -10,7 +10,11 @@ pub struct LexerError {
 
 impl fmt::Display for LexerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Lexer error at {}:{}: {}", self.line, self.column, self.message)
+        write!(
+            f,
+            "Lexer error at {}:{}: {}",
+            self.line, self.column, self.message
+        )
     }
 }
 
@@ -40,7 +44,12 @@ impl Lexer {
             self.skip_whitespace_and_comments();
 
             if self.is_at_end() {
-                tokens.push(Token::new(TokenKind::Eof, String::new(), self.line, self.column));
+                tokens.push(Token::new(
+                    TokenKind::Eof,
+                    String::new(),
+                    self.line,
+                    self.column,
+                ));
                 break;
             }
 
@@ -98,9 +107,19 @@ impl Lexer {
 
         if self.match_char('<') {
             if self.match_char('=') {
-                Ok(Token::new(TokenKind::LShiftAssign, "<<=".to_string(), line, column))
+                Ok(Token::new(
+                    TokenKind::LShiftAssign,
+                    "<<=".to_string(),
+                    line,
+                    column,
+                ))
             } else {
-                Ok(Token::new(TokenKind::LShift, "<<".to_string(), line, column))
+                Ok(Token::new(
+                    TokenKind::LShift,
+                    "<<".to_string(),
+                    line,
+                    column,
+                ))
             }
         } else if self.match_char('=') {
             Ok(Token::new(TokenKind::Le, "<=".to_string(), line, column))
@@ -116,9 +135,19 @@ impl Lexer {
 
         if self.match_char('>') {
             if self.match_char('=') {
-                Ok(Token::new(TokenKind::RShiftAssign, ">>=".to_string(), line, column))
+                Ok(Token::new(
+                    TokenKind::RShiftAssign,
+                    ">>=".to_string(),
+                    line,
+                    column,
+                ))
             } else {
-                Ok(Token::new(TokenKind::RShift, ">>".to_string(), line, column))
+                Ok(Token::new(
+                    TokenKind::RShift,
+                    ">>".to_string(),
+                    line,
+                    column,
+                ))
             }
         } else if self.match_char('=') {
             Ok(Token::new(TokenKind::Ge, ">=".to_string(), line, column))
@@ -151,7 +180,12 @@ impl Lexer {
         self.advance(); // consume '+'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::PlusAssign, "+=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::PlusAssign,
+                "+=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Plus, "+".to_string(), line, column))
         }
@@ -161,7 +195,12 @@ impl Lexer {
         self.advance(); // consume '-'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::MinusAssign, "-=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::MinusAssign,
+                "-=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Minus, "-".to_string(), line, column))
         }
@@ -171,7 +210,12 @@ impl Lexer {
         self.advance(); // consume '*'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::MultAssign, "*=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::MultAssign,
+                "*=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Mult, "*".to_string(), line, column))
         }
@@ -181,7 +225,12 @@ impl Lexer {
         self.advance(); // consume '/'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::DivAssign, "/=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::DivAssign,
+                "/=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Div, "/".to_string(), line, column))
         }
@@ -191,7 +240,12 @@ impl Lexer {
         self.advance(); // consume '%'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::ModAssign, "%=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::ModAssign,
+                "%=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Mod, "%".to_string(), line, column))
         }
@@ -203,7 +257,12 @@ impl Lexer {
         if self.match_char('&') {
             Ok(Token::new(TokenKind::LAnd, "&&".to_string(), line, column))
         } else if self.match_char('=') {
-            Ok(Token::new(TokenKind::AndAssign, "&=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::AndAssign,
+                "&=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::And, "&".to_string(), line, column))
         }
@@ -215,7 +274,12 @@ impl Lexer {
         if self.match_char('|') {
             Ok(Token::new(TokenKind::LOr, "||".to_string(), line, column))
         } else if self.match_char('=') {
-            Ok(Token::new(TokenKind::OrAssign, "|=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::OrAssign,
+                "|=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Or, "|".to_string(), line, column))
         }
@@ -225,7 +289,12 @@ impl Lexer {
         self.advance(); // consume '^'
 
         if self.match_char('=') {
-            Ok(Token::new(TokenKind::XorAssign, "^=".to_string(), line, column))
+            Ok(Token::new(
+                TokenKind::XorAssign,
+                "^=".to_string(),
+                line,
+                column,
+            ))
         } else {
             Ok(Token::new(TokenKind::Xor, "^".to_string(), line, column))
         }
@@ -375,7 +444,11 @@ impl Lexer {
         Ok(Token::new(TokenKind::IntegerLiteral, lexeme, line, column))
     }
 
-    fn lex_identifier_or_keyword(&mut self, line: usize, column: usize) -> Result<Token, LexerError> {
+    fn lex_identifier_or_keyword(
+        &mut self,
+        line: usize,
+        column: usize,
+    ) -> Result<Token, LexerError> {
         let start_pos = self.position;
 
         while self.current_char().is_ascii_alphanumeric() || self.current_char() == '_' {
@@ -477,7 +550,11 @@ impl Lexer {
     fn validate_literal_end(&self, literal_type: &str) -> Result<(), LexerError> {
         if self.current_char().is_ascii_alphanumeric() {
             Err(LexerError {
-                message: format!("Invalid character '{}' in {} literal", self.current_char(), literal_type),
+                message: format!(
+                    "Invalid character '{}' in {} literal",
+                    self.current_char(),
+                    literal_type
+                ),
                 line: self.line,
                 column: self.column,
             })
@@ -523,7 +600,12 @@ mod tests {
         let mut lexer = Lexer::new("0xFG");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character 'G' in hexadecimal literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character 'G' in hexadecimal literal")
+        );
     }
 
     #[test]
@@ -531,7 +613,12 @@ mod tests {
         let mut lexer = Lexer::new("0b102");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character '2' in binary literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character '2' in binary literal")
+        );
     }
 
     #[test]
@@ -539,7 +626,12 @@ mod tests {
         let mut lexer = Lexer::new("0o789");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character '8' in octal literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character '8' in octal literal")
+        );
     }
 
     #[test]
@@ -600,7 +692,12 @@ mod tests {
         let mut lexer = Lexer::new("0xFF_G");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character 'G'"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character 'G'")
+        );
     }
 
     #[test]
@@ -608,7 +705,12 @@ mod tests {
         let mut lexer = Lexer::new("12abc");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character 'a' in decimal literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character 'a' in decimal literal")
+        );
     }
 
     #[test]
@@ -616,7 +718,12 @@ mod tests {
         let mut lexer = Lexer::new("3.14abc");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character 'a' in float literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character 'a' in float literal")
+        );
     }
 
     #[test]
@@ -624,7 +731,12 @@ mod tests {
         let mut lexer = Lexer::new("1e10abc");
         let result = lexer.tokenize();
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Invalid character 'a' in float literal"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Invalid character 'a' in float literal")
+        );
     }
 
     #[test]
