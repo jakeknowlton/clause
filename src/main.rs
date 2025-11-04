@@ -1,15 +1,10 @@
-mod ast;
-mod environment;
-mod interpreter;
-mod lexer;
-mod parser;
-mod repl;
-mod token;
-mod type_checker;
-mod typed_ast;
-mod value;
+mod frontend;
+mod analysis;
+mod runtime;
+mod cli;
+mod error;
 
-use repl::Repl;
+use cli::Repl;
 
 fn main() {
     let mut repl = Repl::new();

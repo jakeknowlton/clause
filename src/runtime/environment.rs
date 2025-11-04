@@ -1,4 +1,5 @@
-use crate::value::Value;
+use crate::runtime::value::Value;
+use crate::error::{RuntimeError, RuntimeErrorKind};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -29,40 +30,40 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: String, value: Value, mutable: bool) -> Result<(), String> {
+    pub fn define(&mut self, name: String, value: Value, mutable: bool) -> Result<(), RuntimeError> {
         let current_scope = self.scopes.last_mut().unwrap();
 
         if current_scope.contains_key(&name) {
-            return Err(format!(
+            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
                 "Variable '{}' is already defined in this scope",
                 name
-            ));
+            )));
         }
 
         current_scope.insert(name, Binding { value, mutable });
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Result<Value, String> {
+    pub fn get(&self, name: &str) -> Result<Value, RuntimeError> {
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.get(name) {
                 return Ok(binding.value.clone());
             }
         }
-        Err(format!("Undefined variable '{}'", name))
+        Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Undefined variable '{}'", name)))
     }
 
-    pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
+    pub fn assign(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(binding) = scope.get_mut(name) {
                 if !binding.mutable {
-                    return Err(format!("Cannot assign to immutable variable '{}'", name));
+                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Cannot assign to immutable variable '{}'", name)));
                 }
                 binding.value = value;
                 return Ok(());
             }
         }
-        Err(format!("Undefined variable '{}'", name))
+        Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Undefined variable '{}'", name)))
     }
 }
 
@@ -118,7 +119,7 @@ mod tests {
             true,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("already defined"));
+        assert!(result.unwrap_err().message.contains("already defined"));
     }
 
     #[test]
@@ -126,7 +127,7 @@ mod tests {
         let env = Environment::new();
         let result = env.get("x");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Undefined variable"));
+        assert!(result.unwrap_err().message.contains("Undefined variable"));
     }
 
     #[test]
@@ -178,7 +179,7 @@ mod tests {
             },
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("immutable"));
+        assert!(result.unwrap_err().message.contains("immutable"));
     }
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
             },
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Undefined variable"));
+        assert!(result.unwrap_err().message.contains("Undefined variable"));
     }
 
     #[test]

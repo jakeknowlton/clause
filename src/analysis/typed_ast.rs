@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Type, UnaryOp};
+use crate::frontend::ast::{BinaryOp, Type, UnaryOp};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]

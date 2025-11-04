@@ -1,10 +1,11 @@
-use crate::ast::{BinaryOp, Type, UnaryOp};
-use crate::environment::Environment;
-use crate::typed_ast::{
-    TypedBinaryExpr, TypedBlock, TypedExpression, TypedProgram, TypedStatement, TypedUnaryExpr,
-    TypedVariableDeclaration,
+use crate::frontend::ast::{BinaryOp, Type, UnaryOp};
+use crate::runtime::environment::Environment;
+use crate::analysis::typed_ast::{
+    TypedBinaryExpr, TypedBlock, TypedExpression, TypedIfExpr, TypedIndexExpr,
+    TypedProgram, TypedStatement, TypedUnaryExpr, TypedVariableDeclaration, TypedWhileExpr,
 };
-use crate::value::Value;
+use crate::runtime::value::Value;
+use crate::error::{RuntimeError, RuntimeErrorKind};
 
 // Control flow signal for break statements
 #[derive(Debug, Clone)]
@@ -24,7 +25,7 @@ impl Interpreter {
         }
     }
 
-    pub fn execute_program(&mut self, program: &TypedProgram) -> Result<Value, String> {
+    pub fn execute_program(&mut self, program: &TypedProgram) -> Result<Value, RuntimeError> {
         let mut last_value = Value::Void;
         for statement in &program.statements {
             last_value = self.execute_statement(statement)?;
@@ -32,7 +33,7 @@ impl Interpreter {
         Ok(last_value)
     }
 
-    fn execute_statement(&mut self, statement: &TypedStatement) -> Result<Value, String> {
+    fn execute_statement(&mut self, statement: &TypedStatement) -> Result<Value, RuntimeError> {
         match statement {
             TypedStatement::VariableDeclaration(var_decl) => {
                 self.execute_variable_declaration(var_decl)
@@ -41,7 +42,7 @@ impl Interpreter {
             TypedStatement::Break(_) => {
                 // Break should never be executed at the top level
                 // It's only valid inside loops and handled there
-                Err("break statement outside of loop".to_string())
+                Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "break statement outside of loop".to_string()))
             }
             TypedStatement::Expression(expr) => self.evaluate_expression(expr),
         }
@@ -50,7 +51,7 @@ impl Interpreter {
     fn execute_variable_declaration(
         &mut self,
         var_decl: &TypedVariableDeclaration,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, RuntimeError> {
         // Type is already resolved, just evaluate the initializer
         let value = self.evaluate_expression(&var_decl.initializer)?;
 
@@ -61,27 +62,27 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn get_array_idx(&mut self, value: &Value) -> Result<usize, String> {
+    fn get_array_idx(&mut self, value: &Value) -> Result<usize, RuntimeError> {
         match *value {
             Value::SignedInt { value, .. } => {
                 if value < 0 {
-                    return Err(format!("Array index cannot be negative: {}", value));
+                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Array index cannot be negative: {}", value)));
                 }
                 Ok(value as usize)
             }
             Value::UnsignedInt { value, .. } => Ok(value as usize),
-            _ => Err("Array index must be an integer".to_string()),
+            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "Array index must be an integer".to_string())),
         }
     }
 
-    fn evaluate_expression(&mut self, expression: &TypedExpression) -> Result<Value, String> {
+    fn evaluate_expression(&mut self, expression: &TypedExpression) -> Result<Value, RuntimeError> {
         match expression {
             TypedExpression::Integer(s, ty) => {
                 // Type is already resolved in the IR
                 match ty {
                     Type::Signed(bits) => self.parse_integer(s, true, *bits),
                     Type::Unsigned(bits) => self.parse_integer(s, false, *bits),
-                    _ => Err(format!("Invalid type for integer literal: {}", ty)),
+                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid type for integer literal: {}", ty))),
                 }
             }
             TypedExpression::Float(s, ty) => {
@@ -89,7 +90,7 @@ impl Interpreter {
                 match ty {
                     Type::F32 => self.parse_float(s, 32),
                     Type::F64 => self.parse_float(s, 64),
-                    _ => Err(format!("Invalid type for float literal: {}", ty)),
+                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid type for float literal: {}", ty))),
                 }
             }
             TypedExpression::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -103,7 +104,7 @@ impl Interpreter {
                 // Extract element type from array type
                 let element_type = match arr_type {
                     Type::Array(et, _) => *et.clone(),
-                    _ => return Err(format!("Invalid array type: {}", arr_type)),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid array type: {}", arr_type))),
                 };
 
                 Ok(Value::Array {
@@ -130,7 +131,7 @@ impl Interpreter {
         }
     }
 
-    fn parse_integer(&self, s: &str, signed: bool, bits: u8) -> Result<Value, String> {
+    fn parse_integer(&self, s: &str, signed: bool, bits: u8) -> Result<Value, RuntimeError> {
         let s = s.replace('_', "");
 
         if signed {
@@ -144,7 +145,7 @@ impl Interpreter {
                 s.parse::<i128>()
             };
 
-            let value = result.map_err(|e| format!("Invalid integer literal: {}", e))?;
+            let value = result.map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid integer literal: {}", e)))?;
             Value::new_signed(value, bits)
         } else {
             let result = if s.starts_with("0x") || s.starts_with("0X") {
@@ -157,26 +158,26 @@ impl Interpreter {
                 s.parse::<u128>()
             };
 
-            let value = result.map_err(|e| format!("Invalid integer literal: {}", e))?;
+            let value = result.map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid integer literal: {}", e)))?;
             Value::new_unsigned(value, bits)
         }
     }
 
-    fn parse_float(&self, s: &str, bits: u8) -> Result<Value, String> {
+    fn parse_float(&self, s: &str, bits: u8) -> Result<Value, RuntimeError> {
         let s = s.replace('_', "");
 
         let value = s
             .parse::<f64>()
-            .map_err(|e| format!("Invalid float literal: {}", e))?;
+            .map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid float literal: {}", e)))?;
 
         match bits {
             32 => Ok(Value::Single(value as f32)),
             64 => Ok(Value::Double(value)),
-            _ => Err(format!("Invalid float bitwidth: {}", bits)),
+            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid float bitwidth: {}", bits))),
         }
     }
 
-    fn evaluate_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, String> {
+    fn evaluate_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, RuntimeError> {
         if self.is_assignment_operator(&binary.operator) {
             return self.evaluate_assignment_binary(binary);
         }
@@ -190,10 +191,10 @@ impl Interpreter {
                         let right = self.evaluate_expression(&binary.right)?;
                         match right {
                             Value::Boolean(_) => Ok(right),
-                            _ => Err(format!("Expected Boolean, found {}", right.type_name())),
+                            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", right.type_name()))),
                         }
                     }
-                    _ => Err(format!("Expected Boolean, found {}", left.type_name())),
+                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", left.type_name()))),
                 }
             }
             BinaryOp::LogicalOr => {
@@ -204,10 +205,10 @@ impl Interpreter {
                         let right = self.evaluate_expression(&binary.right)?;
                         match right {
                             Value::Boolean(_) => Ok(right),
-                            _ => Err(format!("Expected Boolean, found {}", right.type_name())),
+                            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", right.type_name()))),
                         }
                     }
-                    _ => Err(format!("Expected Boolean, found {}", left.type_name())),
+                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", left.type_name()))),
                 }
             }
             _ => {
@@ -235,7 +236,7 @@ impl Interpreter {
         )
     }
 
-    fn evaluate_assignment_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, String> {
+    fn evaluate_assignment_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, RuntimeError> {
         // Evaluate the right-hand side
         let right_value = self.evaluate_expression(&binary.right)?;
 
@@ -246,7 +247,7 @@ impl Interpreter {
             TypedExpression::Index(index_expr) => {
                 self.evaluate_index_assignment(index_expr, &binary.operator, right_value)
             }
-            _ => Err("Invalid assignment target".to_string()),
+            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "Invalid assignment target".to_string())),
         }
     }
 
@@ -255,7 +256,7 @@ impl Interpreter {
         name: &str,
         operator: &BinaryOp,
         right_value: Value,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, RuntimeError> {
         // Apply the assignment operator
         match operator {
             BinaryOp::Assign => {
@@ -328,10 +329,10 @@ impl Interpreter {
 
     fn evaluate_index_assignment(
         &mut self,
-        index_expr: &crate::typed_ast::TypedIndexExpr,
+        index_expr: &TypedIndexExpr,
         operator: &BinaryOp,
         right_value: Value,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, RuntimeError> {
         // For indexed assignment like arr[0] = 42 or arr[i] += 10
 
         let idx_val = self.evaluate_expression(&index_expr.index)?;
@@ -407,7 +408,7 @@ impl Interpreter {
         operator: &BinaryOp,
         left: &Value,
         right: &Value,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, RuntimeError> {
         match operator {
             // Arithmetic
             BinaryOp::Add => left.add(right),
@@ -443,7 +444,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_unary(&mut self, unary: &TypedUnaryExpr) -> Result<Value, String> {
+    fn evaluate_unary(&mut self, unary: &TypedUnaryExpr) -> Result<Value, RuntimeError> {
         // Type is already resolved in the typed IR
         let operand = self.evaluate_expression(&unary.operand)?;
         match unary.operator {
@@ -454,7 +455,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_block(&mut self, block: &TypedBlock) -> Result<Value, String> {
+    fn evaluate_block(&mut self, block: &TypedBlock) -> Result<Value, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -481,13 +482,13 @@ impl Interpreter {
         Ok(result)
     }
 
-    fn evaluate_if(&mut self, if_expr: &crate::typed_ast::TypedIfExpr) -> Result<Value, String> {
+    fn evaluate_if(&mut self, if_expr: &TypedIfExpr) -> Result<Value, RuntimeError> {
         // Evaluate the condition
         let condition_value = self.evaluate_expression(&if_expr.condition)?;
 
         let condition_bool = match condition_value {
             Value::Boolean(b) => b,
-            _ => return Err(format!("If condition must be boolean, found {}", condition_value.type_name())),
+            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("If condition must be boolean, found {}", condition_value.type_name()))),
         };
 
         if condition_bool {
@@ -500,7 +501,7 @@ impl Interpreter {
             let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
             let else_if_bool = match else_if_cond_value {
                 Value::Boolean(b) => b,
-                _ => return Err(format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name()))),
             };
 
             if else_if_bool {
@@ -516,14 +517,14 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_while(&mut self, while_expr: &crate::typed_ast::TypedWhileExpr) -> Result<Value, String> {
+    fn evaluate_while(&mut self, while_expr: &TypedWhileExpr) -> Result<Value, RuntimeError> {
         loop {
             // Evaluate the condition
             let condition_value = self.evaluate_expression(&while_expr.condition)?;
 
             let condition_bool = match condition_value {
                 Value::Boolean(b) => b,
-                _ => return Err(format!("While condition must be boolean, found {}", condition_value.type_name())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("While condition must be boolean, found {}", condition_value.type_name()))),
             };
 
             if !condition_bool {
@@ -549,7 +550,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_typed_block(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<Value, String> {
+    fn evaluate_typed_block(&mut self, block: &TypedBlock) -> Result<Value, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -558,7 +559,7 @@ impl Interpreter {
         // Execute statements until we hit a yield, which acts as a break
         for statement in &block.statements {
             match statement {
-                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                TypedStatement::Yield(yield_stmt) => {
                     // Yield acts as a break - evaluate and return immediately
                     result = self.evaluate_expression(&yield_stmt.value)?;
                     break;
@@ -576,7 +577,7 @@ impl Interpreter {
         Ok(result)
     }
 
-    fn evaluate_typed_block_in_loop(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<ControlFlow, String> {
+    fn evaluate_typed_block_in_loop(&mut self, block: &TypedBlock) -> Result<ControlFlow, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -585,22 +586,22 @@ impl Interpreter {
         // Execute statements, checking for top-level breaks and yields
         for statement in &block.statements {
             match statement {
-                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                TypedStatement::Yield(yield_stmt) => {
                     // Top-level yield in loop body - acts as break
                     let value = self.evaluate_expression(&yield_stmt.value)?;
                     control_flow = ControlFlow::Break(value);
                     break;
                 }
-                crate::typed_ast::TypedStatement::Break(break_stmt) => {
+                TypedStatement::Break(break_stmt) => {
                     // Break statement - always breaks the loop (even from nested blocks)
                     let value = self.evaluate_expression(&break_stmt.value)?;
                     control_flow = ControlFlow::Break(value);
                     break;
                 }
-                crate::typed_ast::TypedStatement::VariableDeclaration(var_decl) => {
+                TypedStatement::VariableDeclaration(var_decl) => {
                     self.execute_variable_declaration(var_decl)?;
                 }
-                crate::typed_ast::TypedStatement::Expression(expr) => {
+                TypedStatement::Expression(expr) => {
                     // Expressions might contain breaks in nested blocks
                     // We need to check if they triggered a break
                     match self.evaluate_expression_checking_breaks(expr)? {
@@ -620,7 +621,7 @@ impl Interpreter {
         Ok(control_flow)
     }
 
-    fn evaluate_expression_checking_breaks(&mut self, expr: &TypedExpression) -> Result<ControlFlow, String> {
+    fn evaluate_expression_checking_breaks(&mut self, expr: &TypedExpression) -> Result<ControlFlow, RuntimeError> {
         // Most expressions don't contain breaks, but if/while expressions can
         match expr {
             TypedExpression::If(if_expr) => self.evaluate_if_checking_breaks(if_expr),
@@ -642,12 +643,12 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_if_checking_breaks(&mut self, if_expr: &crate::typed_ast::TypedIfExpr) -> Result<ControlFlow, String> {
+    fn evaluate_if_checking_breaks(&mut self, if_expr: &TypedIfExpr) -> Result<ControlFlow, RuntimeError> {
         // Evaluate the condition
         let condition_value = self.evaluate_expression(&if_expr.condition)?;
         let condition_bool = match condition_value {
             Value::Boolean(b) => b,
-            _ => return Err(format!("If condition must be boolean, found {}", condition_value.type_name())),
+            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("If condition must be boolean, found {}", condition_value.type_name()))),
         };
 
         if condition_bool {
@@ -660,7 +661,7 @@ impl Interpreter {
             let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
             let else_if_bool = match else_if_cond_value {
                 Value::Boolean(b) => b,
-                _ => return Err(format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name()))),
             };
 
             if else_if_bool {
@@ -676,7 +677,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_block_checking_breaks(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<ControlFlow, String> {
+    fn evaluate_block_checking_breaks(&mut self, block: &TypedBlock) -> Result<ControlFlow, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -685,22 +686,22 @@ impl Interpreter {
         // Execute statements, checking for breaks and yields
         for statement in &block.statements {
             match statement {
-                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                TypedStatement::Yield(yield_stmt) => {
                     // Yield in a nested block doesn't break the loop
                     // Just evaluate and stop executing this block
                     self.evaluate_expression(&yield_stmt.value)?;
                     break;
                 }
-                crate::typed_ast::TypedStatement::Break(break_stmt) => {
+                TypedStatement::Break(break_stmt) => {
                     // Break statement propagates up to break the loop
                     let value = self.evaluate_expression(&break_stmt.value)?;
                     control_flow = ControlFlow::Break(value);
                     break;
                 }
-                crate::typed_ast::TypedStatement::VariableDeclaration(var_decl) => {
+                TypedStatement::VariableDeclaration(var_decl) => {
                     self.execute_variable_declaration(var_decl)?;
                 }
-                crate::typed_ast::TypedStatement::Expression(expr) => {
+                TypedStatement::Expression(expr) => {
                     // Expressions might contain breaks in nested structures
                     match self.evaluate_expression_checking_breaks(expr)? {
                         ControlFlow::Break(value) => {
@@ -729,20 +730,20 @@ impl Default for Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
+    use crate::frontend::lexer::Lexer;
+    use crate::frontend::parser::Parser;
 
-    fn interpret(source: &str) -> Result<Value, String> {
-        use crate::type_checker::TypeChecker;
+    fn interpret(source: &str) -> Result<Value, RuntimeError> {
+        use crate::analysis::type_checker::TypeChecker;
 
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| e.message)?;
+        let tokens = lexer.tokenize().map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
         let mut parser = Parser::new(tokens);
-        let program = parser.parse().map_err(|e| e.message)?;
+        let program = parser.parse().map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
 
         // Type check and get typed IR
         let mut type_checker = TypeChecker::new();
-        let typed_program = type_checker.check_program(&program)?;
+        let typed_program = type_checker.check_program(&program).map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
 
         // Interpret the typed IR
         let mut interpreter = Interpreter::new();
@@ -973,14 +974,14 @@ mod tests {
     fn test_immutable_assignment_error() {
         let result = interpret("fix x = 10\nx = 20");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("immutable"));
+        assert!(result.unwrap_err().message.contains("immutable"));
     }
 
     #[test]
     fn test_undefined_variable_error() {
         let result = interpret("x");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Undefined variable"));
+        assert!(result.unwrap_err().message.contains("Undefined variable"));
     }
 
     #[test]
@@ -1029,7 +1030,7 @@ mod tests {
     fn test_division_by_zero() {
         let result = interpret("10 / 0");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Division by zero"));
+        assert!(result.unwrap_err().message.contains("Division by zero"));
     }
 
     #[test]
@@ -1049,14 +1050,14 @@ mod tests {
         let result = interpret("5 && true");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Expected Boolean"));
-        assert!(err.contains("I64"));
+        assert!(err.message.contains("Expected Boolean"));
+        assert!(err.message.contains("I64"));
 
         let result2 = interpret("true && 5");
         assert!(result2.is_err());
         let err2 = result2.unwrap_err();
-        assert!(err2.contains("Expected Boolean"));
-        assert!(err2.contains("I64"));
+        assert!(err2.message.contains("Expected Boolean"));
+        assert!(err2.message.contains("I64"));
     }
 
     #[test]
@@ -1064,14 +1065,14 @@ mod tests {
         let result = interpret("5 || false");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Expected Boolean"));
-        assert!(err.contains("I64"));
+        assert!(err.message.contains("Expected Boolean"));
+        assert!(err.message.contains("I64"));
 
         let result2 = interpret("false || 5");
         assert!(result2.is_err());
         let err2 = result2.unwrap_err();
-        assert!(err2.contains("Expected Boolean"));
-        assert!(err2.contains("I64"));
+        assert!(err2.message.contains("Expected Boolean"));
+        assert!(err2.message.contains("I64"));
     }
 
     #[test]
@@ -1079,22 +1080,22 @@ mod tests {
         let result = interpret("!5");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Logical NOT requires boolean"));
-        assert!(err.contains("I64"));
+        assert!(err.message.contains("Logical NOT requires boolean"));
+        assert!(err.message.contains("I64"));
 
         let result2 = interpret("!0");
         assert!(result2.is_err());
         assert!(
             result2
                 .unwrap_err()
-                .contains("Logical NOT requires boolean")
+                .message.contains("Logical NOT requires boolean")
         );
 
         let result3 = interpret("!3.14");
         assert!(result3.is_err());
         let err3 = result3.unwrap_err();
-        assert!(err3.contains("Logical NOT requires boolean"));
-        assert!(err3.contains("F64"));
+        assert!(err3.message.contains("Logical NOT requires boolean"));
+        assert!(err3.message.contains("F64"));
     }
 
     #[test]
@@ -1146,7 +1147,7 @@ mod tests {
         let err = result.unwrap_err();
         // Error is "Cannot negate U32" because the literal 5 is parsed as U32 due to
         // type context, and unsigned values cannot be negated
-        assert!(err.contains("Cannot negate"));
+        assert!(err.message.contains("Cannot negate"));
     }
 
     #[test]
@@ -1179,7 +1180,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         // Type checker now catches this, so error message is from type checker
-        assert!(err.contains("Cannot") || err.contains("perform"));
+        assert!(err.message.contains("Cannot") || err.message.contains("perform"));
     }
 
     #[test]
@@ -1207,7 +1208,7 @@ mod tests {
         let source = "let a = 5\n{\n  <- a\n  let b = 10\n}\nb";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Undefined variable"));
+        assert!(result.unwrap_err().message.contains("Undefined variable"));
     }
 
     #[test]
@@ -1234,7 +1235,7 @@ mod tests {
         let source = "{\n  let x = true\n  <- 42\n  <- x\n}";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Integer type expected"));
+        assert!(result.unwrap_err().message.contains("Integer type expected"));
     }
 
     #[test]
@@ -1375,7 +1376,7 @@ mod tests {
         let source = "let arr = [1, 2, 3]\narr[5]";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
+        assert!(result.unwrap_err().message.contains("out of bounds"));
     }
 
     #[test]
@@ -1383,7 +1384,7 @@ mod tests {
         let source = "let arr = [1, 2, 3]\nlet i: I32 = -1\narr[i]";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be negative"));
+        assert!(result.unwrap_err().message.contains("cannot be negative"));
     }
 
     #[test]
@@ -1548,7 +1549,7 @@ mod tests {
         let source = "let arr = [1, 2, 3]\narr[5] = 42";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
+        assert!(result.unwrap_err().message.contains("out of bounds"));
     }
 
     #[test]
@@ -1934,7 +1935,7 @@ mod tests {
         let source = "break 42";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("can only be used inside loops"));
+        assert!(result.unwrap_err().message.contains("can only be used inside loops"));
     }
 
     #[test]
@@ -1943,7 +1944,7 @@ mod tests {
         let result = interpret(source);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("can only be used inside loops") || err.contains("only be used inside loops"));
+        assert!(err.message.contains("can only be used inside loops") || err.message.contains("only be used inside loops"));
     }
 
     #[test]

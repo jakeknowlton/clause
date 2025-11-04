@@ -104,7 +104,7 @@ pub struct WhileExpr {
     pub else_block: Option<Block>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     // Assignment
     Assign,
@@ -150,7 +150,7 @@ pub enum BinaryOp {
     Modulo,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Plus,
     Minus,

@@ -1,7 +1,7 @@
-use crate::interpreter::Interpreter;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
-use crate::type_checker::TypeChecker;
+use crate::runtime::Interpreter;
+use crate::frontend::lexer::Lexer;
+use crate::frontend::parser::Parser;
+use crate::analysis::type_checker::TypeChecker;
 use std::io::{self, Write};
 
 pub struct Repl {
@@ -13,6 +13,7 @@ pub struct Repl {
 }
 
 impl Repl {
+    /// Create a new REPL with the default configuration
     pub fn new() -> Self {
         Self {
             interpreter: Interpreter::new(),
@@ -138,7 +139,7 @@ impl Repl {
             }
         };
 
-        // Interpretation
+        // Execution
         match self.interpreter.execute_program(&typed_program) {
             Ok(value) => {
                 if self.show_result {
@@ -156,6 +157,12 @@ impl Repl {
             ":quit" | ":q" | ":exit" => Ok(false),
             ":help" | ":h" => {
                 self.show_help();
+                Ok(true)
+            }
+            ":reset" => {
+                self.interpreter = Interpreter::new();
+                self.type_checker = TypeChecker::new();
+                println!("Environment reset");
                 Ok(true)
             }
             ":tokens on" => {
@@ -199,6 +206,7 @@ impl Repl {
         println!("Clause REPL Commands:");
         println!("  :help, :h          Show this help message");
         println!("  :quit, :q, :exit   Exit the REPL");
+        println!("  :reset             Reset the environment (clear all variables)");
         println!("  :tokens on/off     Toggle token display");
         println!("  :ast on/off        Toggle AST display");
         println!("  :result on/off     Toggle result display");

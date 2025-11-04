@@ -1,24 +1,6 @@
-use crate::ast::*;
-use crate::token::{Token, TokenKind};
-use std::fmt;
-
-#[derive(Debug)]
-pub struct ParseError {
-    pub message: String,
-    pub token: Token,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Parse error at {}:{}: {} (found '{}')",
-            self.token.line, self.token.column, self.message, self.token.lexeme
-        )
-    }
-}
-
-impl std::error::Error for ParseError {}
+use crate::frontend::ast::*;
+use crate::frontend::token::{Token, TokenKind};
+use crate::error::{ParseError, ParseErrorKind, Span};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -304,7 +286,7 @@ impl Parser {
         while self.match_tokens(&[TokenKind::LBracket]) {
             let index = self.expression()?;
             self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
-            expr = Expression::Index(Box::new(crate::ast::IndexExpr {
+            expr = Expression::Index(Box::new(IndexExpr {
                 array: expr,
                 index,
             }));
@@ -364,10 +346,12 @@ impl Parser {
             return Ok(Expression::Grouping(Box::new(expr)));
         }
 
-        Err(ParseError {
-            message: "Expected expression".to_string(),
-            token: self.peek().clone(),
-        })
+        let token = self.peek();
+        Err(ParseError::new(
+            ParseErrorKind::InvalidSyntax,
+            "Expected expression".to_string(),
+        )
+        .with_span(Span::new(token.line, token.column, token.lexeme.len())))
     }
 
     fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
@@ -478,9 +462,12 @@ impl Parser {
             self.consume(TokenKind::Comma, "Expected ',' after array element type")?;
 
             let size_token = self.consume(TokenKind::IntegerLiteral, "Expected integer literal for array size")?;
-            let size = size_token.lexeme.parse::<usize>().map_err(|_| ParseError {
-                message: format!("Invalid array size: {}", size_token.lexeme),
-                token: size_token.clone(),
+            let size = size_token.lexeme.parse::<usize>().map_err(|_| {
+                ParseError::new(
+                    ParseErrorKind::InvalidSyntax,
+                    format!("Invalid array size: {}", size_token.lexeme),
+                )
+                .with_span(Span::new(size_token.line, size_token.column, size_token.lexeme.len()))
             })?;
 
             self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
@@ -493,10 +480,11 @@ impl Parser {
         let type_name = match &token.kind {
             TokenKind::Identifier => &token.lexeme,
             _ => {
-                return Err(ParseError {
-                    message: "Expected type name".to_string(),
-                    token,
-                });
+                return Err(ParseError::new(
+                    ParseErrorKind::ExpectedToken,
+                    "Expected type name".to_string(),
+                )
+                .with_span(Span::new(token.line, token.column, token.lexeme.len())));
             }
         };
 
@@ -512,19 +500,21 @@ impl Parser {
                     match bits_str.parse::<u8>() {
                         Ok(bits) if bits >= 1 && bits <= 128 => Type::Signed(bits),
                         Ok(bits) => {
-                            return Err(ParseError {
-                                message: format!(
+                            return Err(ParseError::new(
+                                ParseErrorKind::InvalidSyntax,
+                                format!(
                                     "Integer bitwidth must be between 1 and 128, found {}",
                                     bits
                                 ),
-                                token,
-                            });
+                            )
+                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
                         }
                         Err(_) => {
-                            return Err(ParseError {
-                                message: format!("Invalid signed integer type: {}", type_name),
-                                token,
-                            });
+                            return Err(ParseError::new(
+                                ParseErrorKind::InvalidSyntax,
+                                format!("Invalid signed integer type: {}", type_name),
+                            )
+                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
                         }
                     }
                 } else if type_name.starts_with('U') {
@@ -532,26 +522,29 @@ impl Parser {
                     match bits_str.parse::<u8>() {
                         Ok(bits) if bits >= 1 && bits <= 128 => Type::Unsigned(bits),
                         Ok(bits) => {
-                            return Err(ParseError {
-                                message: format!(
+                            return Err(ParseError::new(
+                                ParseErrorKind::InvalidSyntax,
+                                format!(
                                     "Integer bitwidth must be between 1 and 128, found {}",
                                     bits
                                 ),
-                                token,
-                            });
+                            )
+                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
                         }
                         Err(_) => {
-                            return Err(ParseError {
-                                message: format!("Invalid unsigned integer type: {}", type_name),
-                                token,
-                            });
+                            return Err(ParseError::new(
+                                ParseErrorKind::InvalidSyntax,
+                                format!("Invalid unsigned integer type: {}", type_name),
+                            )
+                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
                         }
                     }
                 } else {
-                    return Err(ParseError {
-                        message: format!("Unknown type: {}", type_name),
-                        token,
-                    });
+                    return Err(ParseError::new(
+                        ParseErrorKind::InvalidSyntax,
+                        format!("Unknown type: {}", type_name),
+                    )
+                    .with_span(Span::new(token.line, token.column, token.lexeme.len())));
                 }
             }
         };
@@ -588,10 +581,11 @@ impl Parser {
             TokenKind::Mult => Ok(BinaryOp::Multiply),
             TokenKind::Div => Ok(BinaryOp::Divide),
             TokenKind::Mod => Ok(BinaryOp::Modulo),
-            _ => Err(ParseError {
-                message: format!("Expected binary operator, found {:?}", token.kind),
-                token: token.clone(),
-            }),
+            _ => Err(ParseError::new(
+                ParseErrorKind::UnexpectedToken,
+                format!("Expected binary operator, found {:?}", token.kind),
+            )
+            .with_span(Span::new(token.line, token.column, token.lexeme.len()))),
         }
     }
 
@@ -601,10 +595,11 @@ impl Parser {
             TokenKind::Minus => Ok(UnaryOp::Minus),
             TokenKind::Not => Ok(UnaryOp::LogicalNot),
             TokenKind::BNot => Ok(UnaryOp::BitwiseNot),
-            _ => Err(ParseError {
-                message: format!("Expected unary operator, found {:?}", token.kind),
-                token: token.clone(),
-            }),
+            _ => Err(ParseError::new(
+                ParseErrorKind::UnexpectedToken,
+                format!("Expected unary operator, found {:?}", token.kind),
+            )
+            .with_span(Span::new(token.line, token.column, token.lexeme.len()))),
         }
     }
 
@@ -648,10 +643,12 @@ impl Parser {
         if self.check(&kind) {
             Ok(self.advance())
         } else {
-            Err(ParseError {
-                message: message.to_string(),
-                token: self.peek().clone(),
-            })
+            let token = self.peek();
+            Err(ParseError::new(
+                ParseErrorKind::ExpectedToken,
+                message.to_string(),
+            )
+            .with_span(Span::new(token.line, token.column, token.lexeme.len())))
         }
     }
 }
@@ -659,7 +656,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Lexer;
+    use crate::frontend::lexer::Lexer;
 
     // ============================================================================
     // Test Helper Functions

@@ -1,24 +1,5 @@
-use crate::token::{Token, TokenKind};
-use std::fmt;
-
-#[derive(Debug)]
-pub struct LexerError {
-    pub message: String,
-    pub line: usize,
-    pub column: usize,
-}
-
-impl fmt::Display for LexerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Lexer error at {}:{}: {}",
-            self.line, self.column, self.message
-        )
-    }
-}
-
-impl std::error::Error for LexerError {}
+use crate::frontend::token::{Token, TokenKind};
+use crate::error::{LexerError, LexerErrorKind, Span};
 
 pub struct Lexer {
     input: Vec<char>,
@@ -97,11 +78,11 @@ impl Lexer {
             // Identifiers and keywords
             'a'..='z' | 'A'..='Z' | '_' => self.lex_identifier_or_keyword(start_line, start_column),
 
-            _ => Err(LexerError {
-                message: format!("Unexpected character: '{}'", ch),
-                line: start_line,
-                column: start_column,
-            }),
+            _ => Err(LexerError::new(
+                LexerErrorKind::UnexpectedCharacter,
+                format!("Unexpected character: '{}'", ch),
+            )
+            .with_span(Span::new(start_line, start_column, 1))),
         }
     }
 
@@ -364,11 +345,11 @@ impl Lexer {
         }
 
         if !self.current_char().is_ascii_digit() {
-            return Err(LexerError {
-                message: "Expected digit after exponent".to_string(),
-                line: self.line,
-                column: self.column,
-            });
+            return Err(LexerError::new(
+                LexerErrorKind::InvalidNumber,
+                "Expected digit after exponent".to_string(),
+            )
+            .with_span(Span::new(self.line, self.column, 1)));
         }
 
         while self.current_char().is_ascii_digit() || self.current_char() == '_' {
@@ -384,11 +365,11 @@ impl Lexer {
         self.advance(); // consume 'x' or 'X'
 
         if !self.current_char().is_ascii_hexdigit() {
-            return Err(LexerError {
-                message: "Expected hexadecimal digit after '0x'".to_string(),
-                line,
-                column,
-            });
+            return Err(LexerError::new(
+                LexerErrorKind::InvalidNumber,
+                "Expected hexadecimal digit after '0x'".to_string(),
+            )
+            .with_span(Span::new(line, column, 2)));
         }
 
         while self.current_char().is_ascii_hexdigit() || self.current_char() == '_' {
@@ -407,11 +388,11 @@ impl Lexer {
         self.advance(); // consume 'b' or 'B'
 
         if !matches!(self.current_char(), '0' | '1') {
-            return Err(LexerError {
-                message: "Expected binary digit after '0b'".to_string(),
-                line,
-                column,
-            });
+            return Err(LexerError::new(
+                LexerErrorKind::InvalidNumber,
+                "Expected binary digit after '0b'".to_string(),
+            )
+            .with_span(Span::new(line, column, 2)));
         }
 
         while matches!(self.current_char(), '0' | '1' | '_') {
@@ -430,11 +411,11 @@ impl Lexer {
         self.advance(); // consume 'o' or 'O'
 
         if !matches!(self.current_char(), '0'..='7') {
-            return Err(LexerError {
-                message: "Expected octal digit after '0o'".to_string(),
-                line,
-                column,
-            });
+            return Err(LexerError::new(
+                LexerErrorKind::InvalidNumber,
+                "Expected octal digit after '0o'".to_string(),
+            )
+            .with_span(Span::new(line, column, 2)));
         }
 
         while matches!(self.current_char(), '0'..='7' | '_') {
@@ -556,15 +537,15 @@ impl Lexer {
     /// an attempt to create an invalid identifier starting with a number or a malformed literal).
     fn validate_literal_end(&self, literal_type: &str) -> Result<(), LexerError> {
         if self.current_char().is_ascii_alphanumeric() {
-            Err(LexerError {
-                message: format!(
+            Err(LexerError::new(
+                LexerErrorKind::InvalidNumber,
+                format!(
                     "Invalid character '{}' in {} literal",
                     self.current_char(),
                     literal_type
                 ),
-                line: self.line,
-                column: self.column,
-            })
+            )
+            .with_span(Span::new(self.line, self.column, 1)))
         } else {
             Ok(())
         }

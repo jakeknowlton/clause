@@ -1,15 +1,15 @@
-use clause::lexer::Lexer;
-use clause::parser::Parser;
-use clause::type_checker::TypeChecker;
+use clause::frontend::lexer::Lexer;
+use clause::frontend::parser::Parser;
+use clause::analysis::type_checker::TypeChecker;
 
 fn type_check(source: &str) -> Result<(), String> {
     let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().map_err(|e| e.message)?;
+    let tokens = lexer.tokenize().map_err(|e| e.message.clone())?;
     let mut parser = Parser::new(tokens);
-    let program = parser.parse().map_err(|e| e.message)?;
+    let program = parser.parse().map_err(|e| e.message.clone())?;
 
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&program)?;
+    type_checker.check_program(&program).map_err(|e| e.message.clone())?;
     Ok(())
 }
 

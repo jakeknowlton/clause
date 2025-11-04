@@ -1,11 +1,13 @@
-use crate::ast::{
+use crate::frontend::ast::{
     BinaryExpr, BinaryOp, Block, BreakStatement, Expression, Program, Statement, Type, UnaryExpr, UnaryOp,
     VariableDeclaration,
 };
-use crate::typed_ast::{
-    TypedBinaryExpr, TypedExpression, TypedProgram, TypedStatement, TypedUnaryExpr,
-    TypedVariableDeclaration, TypedYieldStatement,
+use crate::analysis::typed_ast::{
+    TypedBinaryExpr, TypedBlock, TypedBreakStatement, TypedExpression, TypedIfExpr, TypedIndexExpr,
+    TypedProgram, TypedStatement, TypedUnaryExpr, TypedVariableDeclaration, TypedWhileExpr,
+    TypedYieldStatement,
 };
+use crate::error::{TypeError, TypeErrorKind};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -75,7 +77,7 @@ impl TypeChecker {
         self.constraints.push((t1, t2));
     }
 
-    pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, String> {
+    pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, TypeError> {
         // Clear constraints and substitutions from previous calls
         // but preserve scopes so variables persist in REPL
         self.constraints.clear();
@@ -85,7 +87,7 @@ impl TypeChecker {
         // If type checking fails, we don't want partially-declared variables in scope
         let saved_global_scope = self.scopes[0].clone();
 
-        let result = (|| -> Result<TypedProgram, String> {
+        let result = (|| -> Result<TypedProgram, TypeError> {
             // First pass: generate constraints
             for statement in &program.statements {
                 self.check_statement(statement)?;
@@ -113,13 +115,16 @@ impl TypeChecker {
         result
     }
 
-    fn check_statement(&mut self, statement: &Statement) -> Result<TypeVar, String> {
+    fn check_statement(&mut self, statement: &Statement) -> Result<TypeVar, TypeError> {
         match statement {
             Statement::VariableDeclaration(var_decl) => self.check_variable_declaration(var_decl),
             Statement::Yield(yield_stmt) => self.infer_expression(&yield_stmt.value),
             Statement::Break(break_stmt) => {
                 if !self.in_loop {
-                    return Err("break statement can only be used inside loops".to_string());
+                    return Err(TypeError::new(
+                        TypeErrorKind::InvalidOperation,
+                        "break statement can only be used inside loops".to_string(),
+                    ));
                 }
                 self.infer_expression(&break_stmt.value)
             }
@@ -130,7 +135,7 @@ impl TypeChecker {
     fn check_variable_declaration(
         &mut self,
         var_decl: &VariableDeclaration,
-    ) -> Result<TypeVar, String> {
+    ) -> Result<TypeVar, TypeError> {
         // Infer the type of the initializer
         let inferred_type = self.infer_expression(&var_decl.initializer)?;
 
@@ -146,9 +151,12 @@ impl TypeChecker {
         // Check for redefinition in current scope
         let current_scope = self.scopes.last_mut().unwrap();
         if current_scope.contains_key(&var_decl.name) {
-            return Err(format!(
-                "Variable '{}' is already defined in this scope",
-                var_decl.name
+            return Err(TypeError::new(
+                TypeErrorKind::InvalidOperation,
+                format!(
+                    "Variable '{}' is already defined in this scope",
+                    var_decl.name
+                ),
             ));
         }
 
@@ -158,7 +166,7 @@ impl TypeChecker {
         Ok(var_type)
     }
 
-    fn infer_expression(&mut self, expression: &Expression) -> Result<TypeVar, String> {
+    fn infer_expression(&mut self, expression: &Expression) -> Result<TypeVar, TypeError> {
         match expression {
             Expression::Integer(_) => Ok(self.fresh_int_var()),
             Expression::Float(_) => Ok(self.fresh_float_var()),
@@ -176,7 +184,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_binary_expression(&mut self, binary: &BinaryExpr) -> Result<TypeVar, String> {
+    fn check_binary_expression(&mut self, binary: &BinaryExpr) -> Result<TypeVar, TypeError> {
         use BinaryOp::*;
 
         let left_type = self.infer_expression(&binary.left)?;
@@ -195,13 +203,16 @@ impl TypeChecker {
                 for side in vec![&left_type, &right_type] {
                     match side {
                         TypeVar::IntVar(_) => {
-                            return Err("Expected Boolean operand, found I64".to_string());
+                            return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Expected Boolean operand, found I64".to_string()));
                         }
                         TypeVar::FloatVar(_) => {
-                            return Err("Expected Boolean operand, found F64".to_string());
+                            return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Expected Boolean operand, found F64".to_string()));
                         }
                         TypeVar::Concrete(ty) if !matches!(ty, Type::Bool) => {
-                            return Err(format!("Expected Boolean operand, found {}", ty));
+                            return Err(TypeError::new(
+                                TypeErrorKind::TypeMismatch,
+                                format!("Expected Boolean operand, found {}", ty),
+                            ));
                         }
                         _ => {}
                     }
@@ -233,7 +244,10 @@ impl TypeChecker {
                         TypeVar::IntVar(_) => {}
                         TypeVar::Concrete(ty)
                             if matches!(ty, Type::Signed(_) | Type::Unsigned(_)) => {}
-                        _ => return Err(format!("Expected Integer operand, found {}", side)),
+                        _ => return Err(TypeError::new(
+                            TypeErrorKind::TypeMismatch,
+                            format!("Expected Integer operand, found {}", side),
+                        )),
                     }
                 }
                 Ok(left_type)
@@ -241,7 +255,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_unary_expression(&mut self, unary: &UnaryExpr) -> Result<TypeVar, String> {
+    fn check_unary_expression(&mut self, unary: &UnaryExpr) -> Result<TypeVar, TypeError> {
         let operand_type = self.infer_expression(&unary.operand)?;
 
         match unary.operator {
@@ -253,15 +267,15 @@ impl TypeChecker {
                 // LogicalNot requires Bool and returns Bool
                 match &operand_type {
                     TypeVar::IntVar(_) => {
-                        return Err("Logical NOT requires boolean operand, found I64".to_string());
+                        return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Logical NOT requires boolean operand, found I64".to_string()));
                     }
                     TypeVar::FloatVar(_) => {
-                        return Err("Logical NOT requires boolean operand, found F64".to_string());
+                        return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Logical NOT requires boolean operand, found F64".to_string()));
                     }
                     TypeVar::Concrete(ty) if !matches!(ty, Type::Bool) => {
-                        return Err(format!(
-                            "Logical NOT requires boolean operand, found {}",
-                            ty
+                        return Err(TypeError::new(
+                            TypeErrorKind::TypeMismatch,
+                            format!("Logical NOT requires boolean operand, found {}", ty),
                         ));
                     }
                     _ => {}
@@ -272,7 +286,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_array_literal(&mut self, elements: &[Expression]) -> Result<TypeVar, String> {
+    fn check_array_literal(&mut self, elements: &[Expression]) -> Result<TypeVar, TypeError> {
         // Infer type of first element
         let first_type = if !elements.is_empty() {
             let first = self.infer_expression(&elements[0])?;
@@ -291,7 +305,7 @@ impl TypeChecker {
         Ok(self.fresh_array_var(first_type, elements.len()))
     }
 
-    fn check_index_expression(&mut self, index_expr: &crate::ast::IndexExpr) -> Result<TypeVar, String> {
+    fn check_index_expression(&mut self, index_expr: &crate::frontend::ast::IndexExpr) -> Result<TypeVar, TypeError> {
         let array_type = self.infer_expression(&index_expr.array)?;
         let index_type = self.infer_expression(&index_expr.index)?;
 
@@ -300,13 +314,16 @@ impl TypeChecker {
             TypeVar::IntVar(_) => {}, // OK
             TypeVar::Concrete(Type::Signed(_)) | TypeVar::Concrete(Type::Unsigned(_)) => {}, // OK
             TypeVar::FloatVar(_) => {
-                return Err("Array index must be an integer, found F64".to_string());
+                return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Array index must be an integer, found F64".to_string()));
             }
             TypeVar::Concrete(ty) => {
-                return Err(format!("Array index must be an integer, found {}", ty));
+                return Err(TypeError::new(
+                    TypeErrorKind::TypeMismatch,
+                    format!("Array index must be an integer, found {}", ty),
+                ));
             }
             TypeVar::ArrayVar(..) => {
-                return Err("Array index must be an integer, found Array".to_string());
+                return Err(TypeError::new(TypeErrorKind::TypeMismatch, "Array index must be an integer, found Array".to_string()));
             }
         }
 
@@ -315,13 +332,16 @@ impl TypeChecker {
             TypeVar::Concrete(Type::Array(elem_type, _)) => Ok(TypeVar::Concrete(*elem_type)),
             TypeVar::ArrayVar(_, Some(elem_type), _) => Ok(*elem_type),
             TypeVar::ArrayVar(_, None, _) => {
-                Err("Cannot infer element type of array without type annotation".to_string())
+                Err(TypeError::new(TypeErrorKind::InvalidOperation, "Cannot infer element type of array without type annotation".to_string()))
             }
-            _ => Err(format!("Cannot index into non-array type")),
+            _ => Err(TypeError::new(
+                TypeErrorKind::InvalidOperation,
+                "Cannot index into non-array type".to_string(),
+            )),
         }
     }
 
-    fn check_block(&mut self, block: &Block) -> Result<TypeVar, String> {
+    fn check_block(&mut self, block: &Block) -> Result<TypeVar, TypeError> {
         // Push a new scope
         self.scopes.push(HashMap::new());
 
@@ -359,7 +379,7 @@ impl TypeChecker {
         Ok(block_type)
     }
 
-    fn check_if_expression(&mut self, if_expr: &crate::ast::IfExpr) -> Result<TypeVar, String> {
+    fn check_if_expression(&mut self, if_expr: &crate::frontend::ast::IfExpr) -> Result<TypeVar, TypeError> {
         // Check condition must be boolean
         let condition_type = self.infer_expression(&if_expr.condition)?;
         self.add_constraint(condition_type, TypeVar::Concrete(Type::Bool));
@@ -399,7 +419,7 @@ impl TypeChecker {
                     TypeVar::Concrete(Type::Void)
                 }
                 _ => {
-                    return Err("If expression with non-void branch requires an else clause".to_string());
+                    return Err(TypeError::new(TypeErrorKind::InvalidOperation, "If expression with non-void branch requires an else clause".to_string()));
                 }
             }
         };
@@ -407,7 +427,7 @@ impl TypeChecker {
         Ok(result_type)
     }
 
-    fn check_while_expression(&mut self, while_expr: &crate::ast::WhileExpr) -> Result<TypeVar, String> {
+    fn check_while_expression(&mut self, while_expr: &crate::frontend::ast::WhileExpr) -> Result<TypeVar, TypeError> {
         // Check condition must be boolean
         let condition_type = self.infer_expression(&while_expr.condition)?;
         self.add_constraint(condition_type, TypeVar::Concrete(Type::Bool));
@@ -472,7 +492,7 @@ impl TypeChecker {
             match &body_type {
                 TypeVar::Concrete(Type::Void) => TypeVar::Concrete(Type::Void),
                 _ => {
-                    return Err("While loop with non-void break requires an else clause".to_string());
+                    return Err(TypeError::new(TypeErrorKind::InvalidOperation, "While loop with non-void break requires an else clause".to_string()));
                 }
             }
         };
@@ -558,23 +578,26 @@ impl TypeChecker {
         }
     }
 
-    fn lookup_variable(&self, name: &str) -> Result<TypeVar, String> {
+    fn lookup_variable(&self, name: &str) -> Result<TypeVar, TypeError> {
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
                 return Ok(ty.clone());
             }
         }
-        Err(format!("Undefined variable '{}'", name))
+        Err(TypeError::new(
+            TypeErrorKind::UndefinedVariable,
+            format!("Undefined variable '{}'", name),
+        ))
     }
 
-    fn solve_constraints(&mut self) -> Result<(), String> {
+    fn solve_constraints(&mut self) -> Result<(), TypeError> {
         for (t1, t2) in self.constraints.clone() {
             self.unify(t1, t2)?;
         }
         Ok(())
     }
 
-    fn unify(&mut self, t1: TypeVar, t2: TypeVar) -> Result<(), String> {
+    fn unify(&mut self, t1: TypeVar, t2: TypeVar) -> Result<(), TypeError> {
         let t1 = self.apply_substitution(&t1);
         let t2 = self.apply_substitution(&t2);
 
@@ -591,9 +614,9 @@ impl TypeChecker {
                     self.substitution.insert(v, TypeVar::Concrete(ty));
                     Ok(())
                 } else {
-                    Err(format!(
-                        "Type mismatch: Integer type expected, found {}",
-                        ty
+                    Err(TypeError::new(
+                        TypeErrorKind::TypeMismatch,
+                        format!("Type mismatch: Integer type expected, found {}", ty),
                     ))
                 }
             }
@@ -612,7 +635,10 @@ impl TypeChecker {
                     self.substitution.insert(v, TypeVar::Concrete(ty));
                     Ok(())
                 } else {
-                    Err(format!("Type mismatch: Float type expected, found {}", ty))
+                    Err(TypeError::new(
+                        TypeErrorKind::TypeMismatch,
+                        format!("Type mismatch: Float type expected, found {}", ty),
+                    ))
                 }
             }
 
@@ -629,7 +655,10 @@ impl TypeChecker {
                     Type::Array(elem_ty, tlen) => {
                         // Arrays can unify only if their lengths are the same
                         if len != *tlen {
-                            return Err(format!("Array size mismatch {} != {}", len, tlen));
+                            return Err(TypeError::new(
+                                TypeErrorKind::ArraySizeMismatch,
+                                format!("Array size mismatch {} != {}", len, tlen),
+                            ));
                         }
                         // Arrays can unify only if their element types can unify
                         if let Some(vty_box) = vty {
@@ -639,14 +668,20 @@ impl TypeChecker {
                         self.substitution.insert(v, TypeVar::Concrete(ty));
                         Ok(())
                     }
-                    _ => Err(format!("Type mismatch: Array type expected, found {}", ty))
+                    _ => Err(TypeError::new(
+                        TypeErrorKind::TypeMismatch,
+                        format!("Type mismatch: Array type expected, found {}", ty),
+                    ))
                 }
             }
 
             (TypeVar::ArrayVar(v1, lty, llen), TypeVar::ArrayVar(v2, rty, rlen)) => {
                 // Arrays can unify only if their lengths are the same
                 if llen != rlen {
-                    return Err(format!("Array size mismatch {} != {}", llen, rlen));
+                    return Err(TypeError::new(
+                        TypeErrorKind::ArraySizeMismatch,
+                        format!("Array size mismatch {} != {}", llen, rlen),
+                    ));
                 }
                 // Arrays can unify only if their element types can unify
                 match (lty, &rty) {
@@ -662,7 +697,7 @@ impl TypeChecker {
             // IntVar and FloatVar cannot unify
             (TypeVar::IntVar(_), TypeVar::FloatVar(_))
             | (TypeVar::FloatVar(_), TypeVar::IntVar(_)) => {
-                Err("Type mismatch: cannot unify Integer type with Float type".to_string())
+                Err(TypeError::new(TypeErrorKind::IncompatibleTypes, "Type mismatch: cannot unify Integer type with Float type".to_string()))
             }
 
             // Unify concrete types
@@ -673,15 +708,21 @@ impl TypeChecker {
                     // Check for specific error cases to provide better messages
                     match (&ty1, &ty2) {
                         (Type::Signed(_), Type::Unsigned(_))
-                        | (Type::Unsigned(_), Type::Signed(_)) => Err(format!(
-                            "Cannot perform operation on mixed signed/unsigned types: {} and {}",
-                            ty1, ty2
+                        | (Type::Unsigned(_), Type::Signed(_)) => Err(TypeError::new(
+                            TypeErrorKind::IncompatibleTypes,
+                            format!("Cannot perform operation on mixed signed/unsigned types: {} and {}", ty1, ty2),
                         )),
-                        _ => Err(format!("Type mismatch: cannot unify {} with {}", ty1, ty2)),
+                        _ => Err(TypeError::new(
+                            TypeErrorKind::TypeMismatch,
+                            format!("Type mismatch: cannot unify {} with {}", ty1, ty2),
+                        )),
                     }
                 }
             }
-            (_, _) => Err(format!("Type mismatch: cannot unify {} with {}", t1, t2)),
+            (_, _) => Err(TypeError::new(
+                TypeErrorKind::TypeMismatch,
+                format!("Type mismatch: cannot unify {} with {}", t1, t2),
+            )),
         }
     }
 
@@ -699,10 +740,13 @@ impl TypeChecker {
         }
     }
 
-    fn occurs_check_int(&self, var: usize, ty: &TypeVar) -> Result<(), String> {
+    fn occurs_check_int(&self, var: usize, ty: &TypeVar) -> Result<(), TypeError> {
         match ty {
             TypeVar::IntVar(v) if *v == var => {
-                Err("Occurs check failed: infinite type".to_string())
+                Err(TypeError::new(
+                    TypeErrorKind::ConstraintSolvingFailure,
+                    "Occurs check failed: infinite type".to_string(),
+                ))
             }
             TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
@@ -715,10 +759,13 @@ impl TypeChecker {
         }
     }
 
-    fn occurs_check_float(&self, var: usize, ty: &TypeVar) -> Result<(), String> {
+    fn occurs_check_float(&self, var: usize, ty: &TypeVar) -> Result<(), TypeError> {
         match ty {
             TypeVar::FloatVar(v) if *v == var => {
-                Err("Occurs check failed: infinite type".to_string())
+                Err(TypeError::new(
+                    TypeErrorKind::ConstraintSolvingFailure,
+                    "Occurs check failed: infinite type".to_string(),
+                ))
             }
             TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
@@ -731,10 +778,13 @@ impl TypeChecker {
         }
     }
 
-    fn occurs_check_array(&self, var: usize, ty: &TypeVar) -> Result<(), String> {
+    fn occurs_check_array(&self, var: usize, ty: &TypeVar) -> Result<(), TypeError> {
         match ty {
             TypeVar::ArrayVar(v, ..) if *v == var => {
-                Err("Occurs check failed: infinite type".to_string())
+                Err(TypeError::new(
+                    TypeErrorKind::ConstraintSolvingFailure,
+                    "Occurs check failed: infinite type".to_string(),
+                ))
             }
             TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
@@ -759,7 +809,7 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type_var(&self, type_var: &TypeVar) -> Result<Type, String> {
+    fn resolve_type_var(&self, type_var: &TypeVar) -> Result<Type, TypeError> {
         let resolved = self.apply_substitution(type_var);
         match resolved {
             TypeVar::Concrete(ty) => Ok(ty),
@@ -774,13 +824,13 @@ impl TypeChecker {
             TypeVar::ArrayVar(_, ty, len) => {
                 match ty {
                     Some(var) => Ok(Type::Array(Box::new(self.resolve_type_var(&*var)?), len)),
-                    None => Err("Unable to resolve empty array type".to_string()),
+                    None => Err(TypeError::new(TypeErrorKind::InvalidOperation, "Unable to resolve empty array type".to_string())),
                 }
             }
         }
     }
 
-    fn type_statement(&mut self, statement: &Statement) -> Result<TypedStatement, String> {
+    fn type_statement(&mut self, statement: &Statement) -> Result<TypedStatement, TypeError> {
         match statement {
             Statement::VariableDeclaration(var_decl) => Ok(TypedStatement::VariableDeclaration(
                 self.type_variable_declaration(var_decl)?,
@@ -793,7 +843,7 @@ impl TypeChecker {
             }
             Statement::Break(break_stmt) => {
                 let typed_value = self.type_expression(&break_stmt.value)?;
-                Ok(TypedStatement::Break(crate::typed_ast::TypedBreakStatement {
+                Ok(TypedStatement::Break(TypedBreakStatement {
                     value: typed_value,
                 }))
             }
@@ -806,7 +856,7 @@ impl TypeChecker {
     fn type_variable_declaration(
         &mut self,
         var_decl: &VariableDeclaration,
-    ) -> Result<TypedVariableDeclaration, String> {
+    ) -> Result<TypedVariableDeclaration, TypeError> {
         // Pass the type annotation as expected type when converting initializer
         let typed_init = self
             .type_expression_with_hint(&var_decl.initializer, var_decl.type_annotation.as_ref())?;
@@ -824,7 +874,7 @@ impl TypeChecker {
         })
     }
 
-    fn type_expression(&mut self, expression: &Expression) -> Result<TypedExpression, String> {
+    fn type_expression(&mut self, expression: &Expression) -> Result<TypedExpression, TypeError> {
         self.type_expression_with_hint(expression, None)
     }
 
@@ -832,7 +882,7 @@ impl TypeChecker {
         &mut self,
         expression: &Expression,
         hint: Option<&Type>,
-    ) -> Result<Type, String> {
+    ) -> Result<Type, TypeError> {
         if let Some(ty) = hint {
             Ok(ty.clone())
         } else {
@@ -845,7 +895,7 @@ impl TypeChecker {
         &mut self,
         expression: &Expression,
         hint: Option<&Type>,
-    ) -> Result<TypedExpression, String> {
+    ) -> Result<TypedExpression, TypeError> {
         match expression {
             Expression::Integer(s) => Ok(TypedExpression::Integer(
                 s.clone(),
@@ -970,7 +1020,7 @@ impl TypeChecker {
                     }
                 } else {
                     if elements.is_empty() {
-                        Err("Cannot infer type of empty array literal without type annotation".to_string())
+                        Err(TypeError::new(TypeErrorKind::InvalidOperation, "Cannot infer type of empty array literal without type annotation".to_string()))
                     } else {
                         let type_var = self.infer_expression(expression)?;
                         let resolved_type = self.resolve_type_var(&type_var)?;
@@ -995,12 +1045,15 @@ impl TypeChecker {
                 let element_type = match typed_array.get_type() {
                     Type::Array(elem_type, _) => *elem_type,
                     other => {
-                        return Err(format!("Cannot index into non-array type {}", other));
+                        return Err(TypeError::new(
+                            TypeErrorKind::InvalidOperation,
+                            format!("Cannot index into non-array type {}", other),
+                        ));
                     }
                 };
 
                 Ok(TypedExpression::Index(Box::new(
-                    crate::typed_ast::TypedIndexExpr {
+                    TypedIndexExpr {
                         array: typed_array,
                         index: typed_index,
                         element_type,
@@ -1020,7 +1073,7 @@ impl TypeChecker {
         }
     }
 
-    fn type_if_expression(&mut self, if_expr: &crate::ast::IfExpr) -> Result<TypedExpression, String> {
+    fn type_if_expression(&mut self, if_expr: &crate::frontend::ast::IfExpr) -> Result<TypedExpression, TypeError> {
         // Type the condition
         let typed_condition = self.type_expression(&if_expr.condition)?;
 
@@ -1045,7 +1098,7 @@ impl TypeChecker {
         // Determine result type (we already did type checking, so we can look at the first branch)
         let result_type = typed_then_block.block_type.clone();
 
-        Ok(TypedExpression::If(Box::new(crate::typed_ast::TypedIfExpr {
+        Ok(TypedExpression::If(Box::new(TypedIfExpr {
             condition: typed_condition,
             then_block: typed_then_block,
             else_ifs: typed_else_ifs,
@@ -1054,7 +1107,7 @@ impl TypeChecker {
         })))
     }
 
-    fn type_while_expression(&mut self, while_expr: &crate::ast::WhileExpr) -> Result<TypedExpression, String> {
+    fn type_while_expression(&mut self, while_expr: &crate::frontend::ast::WhileExpr) -> Result<TypedExpression, TypeError> {
         // Type the condition
         let typed_condition = self.type_expression(&while_expr.condition)?;
 
@@ -1087,7 +1140,7 @@ impl TypeChecker {
             Type::Void
         };
 
-        Ok(TypedExpression::While(Box::new(crate::typed_ast::TypedWhileExpr {
+        Ok(TypedExpression::While(Box::new(TypedWhileExpr {
             condition: typed_condition,
             body: typed_body,
             else_block: typed_else_block,
@@ -1095,7 +1148,7 @@ impl TypeChecker {
         })))
     }
 
-    fn type_block(&mut self, block: &Block) -> Result<crate::typed_ast::TypedBlock, String> {
+    fn type_block(&mut self, block: &Block) -> Result<TypedBlock, TypeError> {
         // Push scope for the block
         self.scopes.push(HashMap::new());
 
@@ -1106,7 +1159,7 @@ impl TypeChecker {
             let typed_stmt = self.type_statement(statement)?;
 
             // Track variable declarations in the scope
-            if let crate::typed_ast::TypedStatement::VariableDeclaration(ref var_decl) = typed_stmt {
+            if let TypedStatement::VariableDeclaration(ref var_decl) = typed_stmt {
                 let current_scope = self.scopes.last_mut().unwrap();
                 current_scope.insert(
                     var_decl.name.clone(),
@@ -1115,7 +1168,7 @@ impl TypeChecker {
             }
 
             // If it's a yield, use its type as the block type
-            if let crate::typed_ast::TypedStatement::Yield(ref yield_stmt) = typed_stmt {
+            if let TypedStatement::Yield(ref yield_stmt) = typed_stmt {
                 block_type = yield_stmt.value.get_type();
                 typed_statements.push(typed_stmt);
                 // Yield acts as break from block, so stop here
@@ -1131,7 +1184,7 @@ impl TypeChecker {
         // Pop scope
         self.scopes.pop();
 
-        Ok(crate::typed_ast::TypedBlock {
+        Ok(TypedBlock {
             statements: typed_statements,
             block_type,
         })

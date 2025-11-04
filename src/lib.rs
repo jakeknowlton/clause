@@ -1,9 +1,6 @@
-pub mod ast;
-pub mod environment;
-pub mod interpreter;
-pub mod lexer;
-pub mod parser;
-pub mod token;
-pub mod type_checker;
-pub mod typed_ast;
-pub mod value;
+// Core modules organized by compiler phase
+pub mod frontend;
+pub mod analysis;
+pub mod runtime;
+pub mod cli;
+pub mod error;
