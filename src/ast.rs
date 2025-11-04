@@ -121,7 +121,7 @@ pub enum UnaryOp {
     BitwiseNot,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Signed(u8),   // i1 through i128
     Unsigned(u8), // u1 through u128

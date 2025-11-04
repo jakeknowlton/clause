@@ -1,10 +1,12 @@
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::type_checker::TypeChecker;
 use std::io::{self, Write};
 
 pub struct Repl {
     interpreter: Interpreter,
+    type_checker: TypeChecker,
     show_tokens: bool,
     show_ast: bool,
     show_result: bool,
@@ -14,6 +16,7 @@ impl Repl {
     pub fn new() -> Self {
         Self {
             interpreter: Interpreter::new(),
+            type_checker: TypeChecker::new(),
             show_tokens: false,
             show_ast: false,
             show_result: true,
@@ -127,8 +130,16 @@ impl Repl {
             println!("{}", program);
         }
 
+        let typed_program = match self.type_checker.check_program(&program) {
+            Ok(typed_prog) => typed_prog,
+            Err(err) => {
+                eprintln!("Type error: {}", err);
+                return;
+            }
+        };
+
         // Interpretation
-        match self.interpreter.execute_program(&program) {
+        match self.interpreter.execute_program(&typed_program) {
             Ok(value) => {
                 if self.show_result {
                     println!("{}", value);

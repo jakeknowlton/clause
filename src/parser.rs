@@ -364,7 +364,7 @@ impl Parser {
             "Bool" => Type::Bool,
             "Void" => Type::Void,
             _ => {
-                if type_name.starts_with('i') {
+                if type_name.starts_with('I') {
                     let bits_str = &type_name[1..];
                     match bits_str.parse::<u8>() {
                         Ok(bits) if bits >= 1 && bits <= 128 => Type::Signed(bits),
@@ -384,7 +384,7 @@ impl Parser {
                             });
                         }
                     }
-                } else if type_name.starts_with('u') {
+                } else if type_name.starts_with('U') {
                     let bits_str = &type_name[1..];
                     match bits_str.parse::<u8>() {
                         Ok(bits) if bits >= 1 && bits <= 128 => Type::Unsigned(bits),
@@ -522,7 +522,6 @@ mod tests {
     // Test Helper Functions
     // ============================================================================
 
-    /// Parse a source string into a Program AST
     fn parse(source: &str) -> Result<Program, ParseError> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
@@ -530,14 +529,12 @@ mod tests {
         parser.parse()
     }
 
-    /// Parse source and extract the first statement
     fn parse_first_stmt(source: &str) -> Statement {
         let program = parse(source).unwrap();
         assert!(!program.statements.is_empty(), "Program has no statements");
         program.statements[0].clone()
     }
 
-    /// Parse source and extract the first expression statement
     fn parse_first_expr(source: &str) -> Expression {
         match parse_first_stmt(source) {
             Statement::Expression(expr) => expr,
@@ -545,7 +542,6 @@ mod tests {
         }
     }
 
-    /// Parse source and extract the first variable declaration
     fn parse_first_var_decl(source: &str) -> VariableDeclaration {
         match parse_first_stmt(source) {
             Statement::VariableDeclaration(decl) => decl,
@@ -553,7 +549,6 @@ mod tests {
         }
     }
 
-    /// Parse source and extract the first yield statement
     fn parse_first_yield(source: &str) -> YieldStatement {
         match parse_first_stmt(source) {
             Statement::Yield(yield_stmt) => yield_stmt,
@@ -561,7 +556,6 @@ mod tests {
         }
     }
 
-    /// Unwrap a Binary expression or panic
     fn unwrap_binary(expr: Expression) -> Box<BinaryExpr> {
         match expr {
             Expression::Binary(binary) => binary,
@@ -569,7 +563,6 @@ mod tests {
         }
     }
 
-    /// Unwrap a Unary expression or panic
     fn unwrap_unary(expr: Expression) -> Box<UnaryExpr> {
         match expr {
             Expression::Unary(unary) => unary,
@@ -577,7 +570,6 @@ mod tests {
         }
     }
 
-    /// Unwrap a Block expression or panic
     fn unwrap_block(expr: Expression) -> Block {
         match expr {
             Expression::Block(block) => block,
@@ -585,7 +577,6 @@ mod tests {
         }
     }
 
-    /// Unwrap a Grouping expression or panic
     fn unwrap_grouping(expr: Expression) -> Box<Expression> {
         match expr {
             Expression::Grouping(grouped) => grouped,
@@ -775,7 +766,7 @@ mod tests {
 
     #[test]
     fn test_parse_declaration_with_type() {
-        let decl = parse_first_var_decl("let x: i32 = 42");
+        let decl = parse_first_var_decl("let x: I32 = 42");
         assert_eq!(decl.name, "x");
         assert!(decl.mutable);
         assert_eq!(decl.type_annotation, Some(Type::Signed(32)));

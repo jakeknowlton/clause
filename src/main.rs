@@ -5,6 +5,8 @@ mod lexer;
 mod parser;
 mod repl;
 mod token;
+mod type_checker;
+mod typed_ast;
 mod value;
 
 use repl::Repl;
