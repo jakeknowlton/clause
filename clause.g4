@@ -84,7 +84,11 @@ multiplicative
 
 unary
     : ('+' | '-' | '!' | '~') unary
-    | primary
+    | postfix
+    ;
+
+postfix
+    : primary ('[' expression ']')*
     ;
 
 primary
@@ -107,6 +111,11 @@ literal
     | FLOAT_LITERAL
     | BOOLEAN_LITERAL
     | VOID_LITERAL
+    | arrayLiteral
+    ;
+
+arrayLiteral
+    : '[' (expression (',' expression)*)? ']'
     ;
 
 type
@@ -115,6 +124,7 @@ type
     | 'F16' | 'F32' | 'F64'
     | 'Bool'
     | 'Void'
+    | '[' type ',' INTEGER_LITERAL ']'
     ;
 
 // ============================================================================
@@ -221,7 +231,10 @@ LPAREN      : '(';
 RPAREN      : ')';
 LBRACE      : '{';
 RBRACE      : '}';
+LBRACKET    : '[';
+RBRACKET    : ']';
 COLON       : ':';
+COMMA       : ',';
 
 // Comments
 LINE_COMMENT
