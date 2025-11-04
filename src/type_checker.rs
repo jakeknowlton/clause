@@ -63,23 +63,41 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, String> {
-        // First pass: generate constraints
-        for statement in &program.statements {
-            self.check_statement(statement)?;
+        // Clear constraints and substitutions from previous calls
+        // but preserve scopes so variables persist in REPL
+        self.constraints.clear();
+        self.substitution.clear();
+
+        // Save the current global scope for rollback on error (important for REPL)
+        // If type checking fails, we don't want partially-declared variables in scope
+        let saved_global_scope = self.scopes[0].clone();
+
+        let result = (|| -> Result<TypedProgram, String> {
+            // First pass: generate constraints
+            for statement in &program.statements {
+                self.check_statement(statement)?;
+            }
+
+            // Second pass: solve constraints
+            self.solve_constraints()?;
+
+            // Third pass: convert to typed IR with resolved types
+            let mut typed_statements = Vec::new();
+            for statement in &program.statements {
+                typed_statements.push(self.type_statement(statement)?);
+            }
+
+            Ok(TypedProgram {
+                statements: typed_statements,
+            })
+        })();
+
+        // If any pass failed, restore the global scope
+        if result.is_err() {
+            self.scopes[0] = saved_global_scope;
         }
 
-        // Second pass: solve constraints
-        self.solve_constraints()?;
-
-        // Third pass: convert to typed IR with resolved types
-        let mut typed_statements = Vec::new();
-        for statement in &program.statements {
-            typed_statements.push(self.type_statement(statement)?);
-        }
-
-        Ok(TypedProgram {
-            statements: typed_statements,
-        })
+        result
     }
 
     fn check_statement(&mut self, statement: &Statement) -> Result<TypeVar, String> {
