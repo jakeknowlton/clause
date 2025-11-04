@@ -675,3 +675,245 @@ fn test_array_type_propagation() {
     // Type propagates from array annotation to elements
     assert_type_checks("let arr: [I16, 3] = [1, 2, 3]\nlet x: I16 = arr[0]");
 }
+
+// ============================================================================
+// If/Else Expression Type Checking Tests
+// ============================================================================
+
+#[test]
+fn test_if_else_matching_types() {
+    // If and else branches with matching types
+    assert_type_checks("if true { <- 42 } else { <- 0 }");
+}
+
+#[test]
+fn test_if_else_type_mismatch() {
+    // If and else branches must have same type
+    assert_type_error(
+        "if true { <- 42 } else { <- true }",
+        "Type mismatch"
+    );
+}
+
+#[test]
+fn test_if_else_if_matching_types() {
+    // All branches must have matching types
+    assert_type_checks("if true { <- 1 } else if false { <- 2 } else { <- 3 }");
+}
+
+#[test]
+fn test_if_else_if_type_mismatch() {
+    // All branches must have matching types
+    assert_type_error(
+        "if true { <- 1 } else if false { <- 2.0 } else { <- 3 }",
+        "Type mismatch"
+    );
+}
+
+#[test]
+fn test_if_condition_must_be_bool() {
+    // Condition must be boolean
+    assert_type_error(
+        "if 42 { <- 1 } else { <- 2 }",
+        "Type mismatch"
+    );
+}
+
+#[test]
+fn test_if_without_else_void_branches() {
+    // If without else requires all branches to be void
+    assert_type_checks("if true { }");
+}
+
+#[test]
+fn test_if_without_else_requires_void() {
+    // If without else but with non-void yield requires else
+    assert_type_error(
+        "if true { <- 42 }",
+        "requires an else clause"
+    );
+}
+
+#[test]
+fn test_if_else_with_void() {
+    // If/else with void is valid
+    assert_type_checks("if true { } else { }");
+}
+
+#[test]
+fn test_if_else_with_explicit_void() {
+    // If/else with void is valid
+    assert_type_checks("if true { } else { <- void }");
+}
+
+#[test]
+fn test_if_nested() {
+    // Nested if expressions
+    assert_type_checks("if true { <- if false { <- 1 } else { <- 2 } } else { <- 3 }");
+}
+
+#[test]
+fn test_if_with_expression_condition() {
+    // Condition can be any boolean expression
+    assert_type_checks("let x = 5\nif x > 3 { <- 100 } else { <- 200 }");
+}
+
+#[test]
+fn test_if_result_type_inference() {
+    // Result type is inferred from branches
+    assert_type_checks("let x = if true { <- 42 } else { <- 0 }\nlet y: I64 = x");
+}
+
+#[test]
+fn test_if_with_different_integer_types() {
+    // Branches with different integer types should unify
+    assert_type_checks("let x: I32 = if true { <- 42 } else { <- 0 }");
+}
+
+#[test]
+fn test_if_float_branches() {
+    // If/else with float types
+    assert_type_checks("if false { <- 1.0 } else { <- 2.0 }");
+}
+
+#[test]
+fn test_if_bool_branches() {
+    // If/else with boolean types
+    assert_type_checks("if true { <- true } else { <- false }");
+}
+
+#[test]
+fn test_if_array_branches() {
+    // If/else with array types
+    assert_type_checks("if true { <- [1, 2, 3] } else { <- [4, 5, 6] }");
+}
+
+#[test]
+fn test_if_array_type_mismatch() {
+    // If/else with different array sizes
+    assert_type_error(
+        "if true { <- [1, 2] } else { <- [1, 2, 3] }",
+        "Array size mismatch"
+    );
+}
+
+// ============================================================================
+// While Loop Type Checking Tests
+// ============================================================================
+
+#[test]
+fn test_while_condition_must_be_bool() {
+    // While condition must be boolean
+    assert_type_error(
+        "while 42 { }",
+        "Type mismatch"
+    );
+}
+
+#[test]
+fn test_while_with_bool_condition() {
+    // While with boolean condition
+    assert_type_checks("while true { <- void }");
+}
+
+#[test]
+fn test_while_with_expression_condition() {
+    // While with boolean expression condition
+    assert_type_checks("let x = 5\nwhile x > 0 { x = x - 1 }");
+}
+
+#[test]
+fn test_while_no_yield_is_void() {
+    // While without yield evaluates to void
+    assert_type_checks("let x = while false { }\nlet y: Void = x");
+}
+
+#[test]
+fn test_while_with_yield() {
+    // While with yield
+    assert_type_checks("while true { <- 42 } else { <- -1 }");
+}
+
+#[test]
+fn test_while_with_void_yield() {
+    // While with yield
+    assert_type_checks("while true { <- void }");
+}
+
+#[test]
+fn test_while_yield_type_inference() {
+    // While yield type is inferred
+    assert_type_checks("let x = while true { <- 42 } else { <- -10 }\nlet y: I64 = x");
+}
+
+#[test]
+fn test_while_multiple_yields_same_type() {
+    // Multiple yields must have same type (both paths yield void)
+    assert_type_checks("{ let i = 0\nwhile i < 10 { i = i + 1\nif i == 5 { <- void } } }");
+}
+
+#[test]
+fn test_while_in_block() {
+    // While inside a block
+    assert_type_checks("{ let i = 0\nwhile i < 5 { i = i + 1 }\n<- i }");
+}
+
+#[test]
+fn test_while_nested_block_doesnt_break() {
+    // Nested block yield doesn't break while loop
+    assert_type_checks("{ let i = 0\nwhile i < 3 { let x = { <- 10 }\ni = i + 1 }\n<- i }");
+}
+
+#[test]
+fn test_while_with_array_mutation() {
+    // While with array mutation
+    assert_type_checks("{ let arr = [0, 0, 0]\nlet i = 0\nwhile i < 3 { arr[i] = i\ni = i + 1 } }");
+}
+
+#[test]
+fn test_while_with_conditional() {
+    // While with if inside
+    assert_type_checks("{ let i = 0\nwhile i < 10 { i = i + 1\nif i == 5 { <- void } } }");
+}
+
+#[test]
+fn test_nested_if_in_while() {
+    // Nested if inside while
+    assert_type_checks("while true { if true { <- 42 } else { <- 0 } }");
+}
+
+#[test]
+fn test_nested_while_in_if() {
+    // Nested while inside if
+    assert_type_checks("if true { <- while true { <- 1 } else { <- 0 } } else { <- 2 }");
+}
+
+#[test]
+fn test_if_else_all_branches_void() {
+    // If/else where all branches are void
+    assert_type_checks("if true { let x = 1 } else if false { let y = 2 } else { let z = 3 }");
+}
+
+#[test]
+fn test_complex_control_flow() {
+    // Complex nested control flow
+    assert_type_checks(r#"
+        {
+            let result = 0
+            let i = 0
+            while i < 10 {
+                i = i + 1
+                if i > 5 {
+                    result = i
+                    <- void
+                }
+            }
+            <- result
+        }
+    "#);
+}
+
+#[test]
+fn test_yield_and_break_incompatible_types() {
+    assert_type_error("while true { <- 25\nbreak true } else { <- false }", "Integer type expected")
+}

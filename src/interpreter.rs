@@ -6,6 +6,13 @@ use crate::typed_ast::{
 };
 use crate::value::Value;
 
+// Control flow signal for break statements
+#[derive(Debug, Clone)]
+enum ControlFlow {
+    None,
+    Break(Value),
+}
+
 pub struct Interpreter {
     environment: Environment,
 }
@@ -31,6 +38,11 @@ impl Interpreter {
                 self.execute_variable_declaration(var_decl)
             }
             TypedStatement::Yield(yield_stmt) => self.evaluate_expression(&yield_stmt.value),
+            TypedStatement::Break(_) => {
+                // Break should never be executed at the top level
+                // It's only valid inside loops and handled there
+                Err("break statement outside of loop".to_string())
+            }
             TypedStatement::Expression(expr) => self.evaluate_expression(expr),
         }
     }
@@ -112,6 +124,8 @@ impl Interpreter {
                 array_val.index(idx)
             }
             TypedExpression::Block(block) => self.evaluate_block(block),
+            TypedExpression::If(if_expr) => self.evaluate_if(if_expr),
+            TypedExpression::While(while_expr) => self.evaluate_while(while_expr),
             TypedExpression::Grouping(expr) => self.evaluate_expression(expr),
         }
     }
@@ -465,6 +479,244 @@ impl Interpreter {
         self.environment.pop_scope();
 
         Ok(result)
+    }
+
+    fn evaluate_if(&mut self, if_expr: &crate::typed_ast::TypedIfExpr) -> Result<Value, String> {
+        // Evaluate the condition
+        let condition_value = self.evaluate_expression(&if_expr.condition)?;
+
+        let condition_bool = match condition_value {
+            Value::Boolean(b) => b,
+            _ => return Err(format!("If condition must be boolean, found {}", condition_value.type_name())),
+        };
+
+        if condition_bool {
+            // Execute then block
+            return self.evaluate_typed_block(&if_expr.then_block);
+        }
+
+        // Check else-if branches
+        for (else_if_condition, else_if_block) in &if_expr.else_ifs {
+            let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
+            let else_if_bool = match else_if_cond_value {
+                Value::Boolean(b) => b,
+                _ => return Err(format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name())),
+            };
+
+            if else_if_bool {
+                return self.evaluate_typed_block(else_if_block);
+            }
+        }
+
+        // Execute else block if present, otherwise return void
+        if let Some(else_block) = &if_expr.else_block {
+            self.evaluate_typed_block(else_block)
+        } else {
+            Ok(Value::Void)
+        }
+    }
+
+    fn evaluate_while(&mut self, while_expr: &crate::typed_ast::TypedWhileExpr) -> Result<Value, String> {
+        loop {
+            // Evaluate the condition
+            let condition_value = self.evaluate_expression(&while_expr.condition)?;
+
+            let condition_bool = match condition_value {
+                Value::Boolean(b) => b,
+                _ => return Err(format!("While condition must be boolean, found {}", condition_value.type_name())),
+            };
+
+            if !condition_bool {
+                // Condition is false - execute else block if present
+                if let Some(else_block) = &while_expr.else_block {
+                    return self.evaluate_typed_block(else_block);
+                } else {
+                    return Ok(Value::Void);
+                }
+            }
+
+            // Execute the body - check for breaks and top-level yields
+            match self.evaluate_typed_block_in_loop(&while_expr.body)? {
+                ControlFlow::Break(value) => {
+                    // Break encountered - return that value
+                    return Ok(value);
+                }
+                ControlFlow::None => {
+                    // No break/yield, continue looping
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn evaluate_typed_block(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<Value, String> {
+        // Push a new scope for the block
+        self.environment.push_scope();
+
+        let mut result = Value::Void;
+
+        // Execute statements until we hit a yield, which acts as a break
+        for statement in &block.statements {
+            match statement {
+                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                    // Yield acts as a break - evaluate and return immediately
+                    result = self.evaluate_expression(&yield_stmt.value)?;
+                    break;
+                }
+                _ => {
+                    // Other statements (declarations and expressions) don't contribute to block value
+                    self.execute_statement(statement)?;
+                }
+            }
+        }
+
+        // Pop the block's scope
+        self.environment.pop_scope();
+
+        Ok(result)
+    }
+
+    fn evaluate_typed_block_in_loop(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<ControlFlow, String> {
+        // Push a new scope for the block
+        self.environment.push_scope();
+
+        let mut control_flow = ControlFlow::None;
+
+        // Execute statements, checking for top-level breaks and yields
+        for statement in &block.statements {
+            match statement {
+                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                    // Top-level yield in loop body - acts as break
+                    let value = self.evaluate_expression(&yield_stmt.value)?;
+                    control_flow = ControlFlow::Break(value);
+                    break;
+                }
+                crate::typed_ast::TypedStatement::Break(break_stmt) => {
+                    // Break statement - always breaks the loop (even from nested blocks)
+                    let value = self.evaluate_expression(&break_stmt.value)?;
+                    control_flow = ControlFlow::Break(value);
+                    break;
+                }
+                crate::typed_ast::TypedStatement::VariableDeclaration(var_decl) => {
+                    self.execute_variable_declaration(var_decl)?;
+                }
+                crate::typed_ast::TypedStatement::Expression(expr) => {
+                    // Expressions might contain breaks in nested blocks
+                    // We need to check if they triggered a break
+                    match self.evaluate_expression_checking_breaks(expr)? {
+                        ControlFlow::Break(value) => {
+                            control_flow = ControlFlow::Break(value);
+                            break;
+                        }
+                        ControlFlow::None => {}
+                    }
+                }
+            }
+        }
+
+        // Pop the block's scope
+        self.environment.pop_scope();
+
+        Ok(control_flow)
+    }
+
+    fn evaluate_expression_checking_breaks(&mut self, expr: &TypedExpression) -> Result<ControlFlow, String> {
+        // Most expressions don't contain breaks, but if/while expressions can
+        match expr {
+            TypedExpression::If(if_expr) => self.evaluate_if_checking_breaks(if_expr),
+            TypedExpression::While(while_expr) => {
+                // While can contain breaks in its body
+                // We need to execute the whole while loop, which handles breaks internally
+                self.evaluate_while(while_expr)?;
+                Ok(ControlFlow::None)
+            }
+            TypedExpression::Block(block) => {
+                // Blocks can contain break statements
+                self.evaluate_block_checking_breaks(block)
+            }
+            _ => {
+                // Other expressions don't contain breaks
+                self.evaluate_expression(expr)?;
+                Ok(ControlFlow::None)
+            }
+        }
+    }
+
+    fn evaluate_if_checking_breaks(&mut self, if_expr: &crate::typed_ast::TypedIfExpr) -> Result<ControlFlow, String> {
+        // Evaluate the condition
+        let condition_value = self.evaluate_expression(&if_expr.condition)?;
+        let condition_bool = match condition_value {
+            Value::Boolean(b) => b,
+            _ => return Err(format!("If condition must be boolean, found {}", condition_value.type_name())),
+        };
+
+        if condition_bool {
+            // Execute then block and check for breaks
+            return self.evaluate_block_checking_breaks(&if_expr.then_block);
+        }
+
+        // Check else-if branches
+        for (else_if_condition, else_if_block) in &if_expr.else_ifs {
+            let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
+            let else_if_bool = match else_if_cond_value {
+                Value::Boolean(b) => b,
+                _ => return Err(format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name())),
+            };
+
+            if else_if_bool {
+                return self.evaluate_block_checking_breaks(else_if_block);
+            }
+        }
+
+        // Execute else block if present
+        if let Some(else_block) = &if_expr.else_block {
+            self.evaluate_block_checking_breaks(else_block)
+        } else {
+            Ok(ControlFlow::None)
+        }
+    }
+
+    fn evaluate_block_checking_breaks(&mut self, block: &crate::typed_ast::TypedBlock) -> Result<ControlFlow, String> {
+        // Push a new scope for the block
+        self.environment.push_scope();
+
+        let mut control_flow = ControlFlow::None;
+
+        // Execute statements, checking for breaks and yields
+        for statement in &block.statements {
+            match statement {
+                crate::typed_ast::TypedStatement::Yield(yield_stmt) => {
+                    // Yield in a nested block doesn't break the loop
+                    // Just evaluate and stop executing this block
+                    self.evaluate_expression(&yield_stmt.value)?;
+                    break;
+                }
+                crate::typed_ast::TypedStatement::Break(break_stmt) => {
+                    // Break statement propagates up to break the loop
+                    let value = self.evaluate_expression(&break_stmt.value)?;
+                    control_flow = ControlFlow::Break(value);
+                    break;
+                }
+                crate::typed_ast::TypedStatement::VariableDeclaration(var_decl) => {
+                    self.execute_variable_declaration(var_decl)?;
+                }
+                crate::typed_ast::TypedStatement::Expression(expr) => {
+                    // Expressions might contain breaks in nested structures
+                    match self.evaluate_expression_checking_breaks(expr)? {
+                        ControlFlow::Break(value) => {
+                            control_flow = ControlFlow::Break(value);
+                            break;
+                        }
+                        ControlFlow::None => {}
+                    }
+                }
+            }
+        }
+
+        // Pop the block's scope
+        self.environment.pop_scope();
+
+        Ok(control_flow)
     }
 }
 
@@ -1317,5 +1569,406 @@ mod tests {
         let source = "[1, 2, 3][0] -= 30";
         let result = interpret(source).unwrap();
         assert_eq!(result.type_name(), "[I64, 3]")
+    }
+
+    // ============================================================================
+    // If/Else Tests
+    // ============================================================================
+
+    #[test]
+    fn test_if_then_true() {
+        let source = "if true { <- 42 } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_then_false() {
+        let source = "if false { <- 42 } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 0,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_else_if_first_branch() {
+        let source = "if true { <- 1 } else if true { <- 2 } else { <- 3 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 1,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_else_if_second_branch() {
+        let source = "if false { <- 1 } else if true { <- 2 } else { <- 3 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 2,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_else_if_else_branch() {
+        let source = "if false { <- 1 } else if false { <- 2 } else { <- 3 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 3,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_with_expression_condition() {
+        let source = "let x = 5\nif x > 3 { <- 100 } else { <- 200 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 100,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_without_else_void() {
+        let source = "if false { }";
+        let result = interpret(source).unwrap();
+        assert_eq!(result, Value::Void);
+    }
+
+    #[test]
+    fn test_if_nested() {
+        let source = "if true { <- if false { <- 1 } else { <- 2 } } else { <- 3 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 2,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_if_with_variable_assignment() {
+        let source = "let x = if true { <- 42 } else { <- 0 }\n<- x";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    // ============================================================================
+    // While Loop Tests
+    // ============================================================================
+
+    #[test]
+    fn test_while_false_no_execution() {
+        let source = "while false { <- 42 } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 0,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_true_with_yield_breaks() {
+        let source = "while true { <- 42 } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_loop_counter() {
+        let source = "{ let i = 0\nwhile i < 5 { i = i + 1 }\n<- i }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 5,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_loop_sum() {
+        let source = "{ let sum = 0\nlet i = 1\nwhile i <= 5 { sum = sum + i\ni = i + 1 }\n<- sum }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 15,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_with_conditional_yield() {
+        let source = "{ let i = 0\nlet result = 0\nwhile i < 10 { i = i + 1\nif i == 3 { result = i\n<- void } }\n<- result }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 3,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_nested_block_yield_doesnt_break() {
+        let source = "{ let i = 0\nwhile i < 3 { let x = { <- 10 }\ni = i + 1 }\n<- i }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 3,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_array_manipulation() {
+        let source = "{ let arr = [0, 0, 0]\nlet i = 0\nwhile i < 3 { arr[i] = i * 2\ni = i + 1 }\n<- arr[2] }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 4,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_with_void_yield() {
+        let source = "{ let i = 0\nwhile i < 5 { i = i + 1\nif i == 10 { <- void } }\n<- i }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 5,
+                bits: 64
+            }
+        );
+    }
+
+    // ============================================================================
+    // Break and While...Else Tests
+    // ============================================================================
+
+    #[test]
+    fn test_break_exits_loop() {
+        let source = "while true { break 42 } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_break_from_nested_block() {
+        let source = "while true { { { break 99 } } } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 99,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_break_from_nested_if() {
+        let source = "let i = 0\nwhile true { i = i + 1\nif i > 3 { break i * 10 } else { } } else { <- 0 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 40,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_yield_in_nested_block_doesnt_break_loop() {
+        let source = "{ let i = 0\nwhile i < 3 { i = i + 1\nlet x = { <- 100 } }\n<- i }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 3,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_else_executes_on_false_condition() {
+        let source = "{ let i = 0\n<- while i < 3 { i = i + 1 } else { <- 42 } }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_else_skipped_on_break() {
+        let source = "while true { break 100 } else { <- 200 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 100,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_else_skipped_on_yield() {
+        let source = "while true { <- 100 } else { <- 200 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 100,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_else_with_initial_false_condition() {
+        let source = "while false { <- 1 } else { <- 2 }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 2,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_break_and_yield_coexist() {
+        let source = r#"
+        {
+            let i = 0
+            <- while true {
+                i = i + 1
+                if i == 3 {
+                    <- void
+                } else { }
+                if i == 7 {
+                    break i
+                } else { }
+            } else {
+                <- 0
+            }
+        }"#;
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 7,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_break_outside_loop_error() {
+        let source = "break 42";
+        let result = interpret(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("can only be used inside loops"));
+    }
+
+    #[test]
+    fn test_break_in_block_outside_loop_error() {
+        let source = "{ break 10 }";
+        let result = interpret(source);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("can only be used inside loops") || err.contains("only be used inside loops"));
+    }
+
+    #[test]
+    fn test_nested_while_with_break_inner() {
+        let source = "{ let outer = 0\nwhile outer < 3 { outer = outer + 1\nlet inner = 0\nlet val = while inner < 5 { inner = inner + 1\nif inner == 2 { break inner } else { } } else { <- 0 } }\n<- outer }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 3,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_while_else_with_multiple_iterations() {
+        let source = "let sum = 0\nlet i = 1\nwhile i <= 5 { sum = sum + i\ni = i + 1 } else { <- sum }";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 15,
+                bits: 64
+            }
+        );
     }
 }

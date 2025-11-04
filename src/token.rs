@@ -34,6 +34,10 @@ pub enum TokenKind {
     // Keywords
     Let,
     Fix,
+    If,
+    Else,
+    While,
+    Break,
 
     // Literals
     IntegerLiteral,

@@ -1,9 +1,9 @@
 use crate::ast::{
-    BinaryExpr, BinaryOp, Block, Expression, Program, Statement, Type, UnaryExpr, UnaryOp,
+    BinaryExpr, BinaryOp, Block, BreakStatement, Expression, Program, Statement, Type, UnaryExpr, UnaryOp,
     VariableDeclaration,
 };
 use crate::typed_ast::{
-    TypedBinaryExpr, TypedBlock, TypedExpression, TypedProgram, TypedStatement, TypedUnaryExpr,
+    TypedBinaryExpr, TypedExpression, TypedProgram, TypedStatement, TypedUnaryExpr,
     TypedVariableDeclaration, TypedYieldStatement,
 };
 use std::collections::HashMap;
@@ -36,6 +36,7 @@ pub struct TypeChecker {
     next_var_id: usize,
     constraints: Vec<Constraint>,
     substitution: Substitution,
+    in_loop: bool, // Track if we're currently inside a loop
 }
 
 impl TypeChecker {
@@ -45,6 +46,7 @@ impl TypeChecker {
             next_var_id: 0,
             constraints: Vec::new(),
             substitution: HashMap::new(),
+            in_loop: false,
         }
     }
 
@@ -115,6 +117,12 @@ impl TypeChecker {
         match statement {
             Statement::VariableDeclaration(var_decl) => self.check_variable_declaration(var_decl),
             Statement::Yield(yield_stmt) => self.infer_expression(&yield_stmt.value),
+            Statement::Break(break_stmt) => {
+                if !self.in_loop {
+                    return Err("break statement can only be used inside loops".to_string());
+                }
+                self.infer_expression(&break_stmt.value)
+            }
             Statement::Expression(expr) => self.infer_expression(expr),
         }
     }
@@ -162,6 +170,8 @@ impl TypeChecker {
             Expression::Unary(unary) => self.check_unary_expression(unary),
             Expression::Index(index_expr) => self.check_index_expression(index_expr),
             Expression::Block(block) => self.check_block(block),
+            Expression::If(if_expr) => self.check_if_expression(if_expr),
+            Expression::While(while_expr) => self.check_while_expression(while_expr),
             Expression::Grouping(expr) => self.infer_expression(expr),
         }
     }
@@ -321,6 +331,7 @@ impl TypeChecker {
         // Check all statements and collect yield types
         // Note: Even though yield acts as a break at runtime, we still type-check
         // all statements to catch errors in unreachable code
+        // Break statements do NOT contribute to block type - they exit the loop, not the block
         for statement in &block.statements {
             match statement {
                 Statement::Yield(yield_stmt) => {
@@ -346,6 +357,205 @@ impl TypeChecker {
         self.scopes.pop();
 
         Ok(block_type)
+    }
+
+    fn check_if_expression(&mut self, if_expr: &crate::ast::IfExpr) -> Result<TypeVar, String> {
+        // Check condition must be boolean
+        let condition_type = self.infer_expression(&if_expr.condition)?;
+        self.add_constraint(condition_type, TypeVar::Concrete(Type::Bool));
+
+        // Check then block
+        let then_type = self.check_block(&if_expr.then_block)?;
+
+        // Check all else-if branches
+        let mut branch_types = vec![then_type.clone()];
+        for (else_if_condition, else_if_block) in &if_expr.else_ifs {
+            let else_if_cond_type = self.infer_expression(else_if_condition)?;
+            self.add_constraint(else_if_cond_type, TypeVar::Concrete(Type::Bool));
+            let else_if_type = self.check_block(else_if_block)?;
+            branch_types.push(else_if_type);
+        }
+
+        // Check else block if present
+        let result_type = if let Some(else_block) = &if_expr.else_block {
+            let else_type = self.check_block(else_block)?;
+            branch_types.push(else_type);
+
+            // All branches must have the same type
+            let unified_type = branch_types[0].clone();
+            for branch_type in branch_types.iter().skip(1) {
+                self.add_constraint(unified_type.clone(), branch_type.clone());
+            }
+            unified_type
+        } else {
+            // No else branch - check if then block has a yield
+            // If it does, we require an else branch
+            match &then_type {
+                TypeVar::Concrete(Type::Void) => {
+                    // All branches must be void if there's no else
+                    for branch_type in branch_types.iter() {
+                        self.add_constraint(branch_type.clone(), TypeVar::Concrete(Type::Void));
+                    }
+                    TypeVar::Concrete(Type::Void)
+                }
+                _ => {
+                    return Err("If expression with non-void branch requires an else clause".to_string());
+                }
+            }
+        };
+
+        Ok(result_type)
+    }
+
+    fn check_while_expression(&mut self, while_expr: &crate::ast::WhileExpr) -> Result<TypeVar, String> {
+        // Check condition must be boolean
+        let condition_type = self.infer_expression(&while_expr.condition)?;
+        self.add_constraint(condition_type, TypeVar::Concrete(Type::Bool));
+
+        // Find all break statements in the body (excluding nested loops)
+        let breaks = self.find_all_breaks(&while_expr.body);
+
+        // Set loop context and check body block
+        let old_in_loop = self.in_loop;
+        self.in_loop = true;
+
+        // Check all statements in the body (for general type checking)
+        // But we'll handle break types separately
+        let yield_body_type = self.check_block(&while_expr.body)?;
+
+        self.in_loop = old_in_loop;
+
+        // Collect break types (only if we're in a loop context)
+        let mut break_types: Vec<TypeVar> = Vec::new();
+        for break_stmt in breaks {
+            let break_type = self.infer_expression(&break_stmt.value)?;
+            break_types.push(break_type);
+        }
+
+        // Determine the body type based on breaks
+        let body_type = if !break_types.is_empty() {
+            let first_break_type = break_types[0].clone();
+            for break_type in break_types.iter().skip(1) {
+                self.add_constraint(first_break_type.clone(), break_type.clone());
+            }
+            first_break_type
+        } else {
+            // If no breaks, use the yield type (these are constrained to be the same)
+            yield_body_type.clone()
+        };
+
+        // Make sure that break statements match any yields
+        match yield_body_type {
+            TypeVar::Concrete(Type::Void) => {}
+            _ => self.add_constraint(yield_body_type, body_type.clone())
+        }
+
+        // Check else block if present
+        let result_type = if let Some(else_block) = &while_expr.else_block {
+            let else_type = self.check_block(else_block)?;
+
+            // If body has breaks (non-void), they must match the else type
+            // If body is void (no breaks), the loop returns the else type
+            match &body_type {
+                TypeVar::Concrete(Type::Void) => {
+                    // No breaks in body - loop returns else type
+                    else_type
+                }
+                _ => {
+                    // Body has breaks - they must match else type
+                    self.add_constraint(body_type.clone(), else_type.clone());
+                    body_type
+                }
+            }
+        } else {
+            // No else block - body must be void (no breaks)
+            match &body_type {
+                TypeVar::Concrete(Type::Void) => TypeVar::Concrete(Type::Void),
+                _ => {
+                    return Err("While loop with non-void break requires an else clause".to_string());
+                }
+            }
+        };
+
+        Ok(result_type)
+    }
+
+    fn find_all_breaks<'a>(&self, block: &'a Block) -> Vec<&'a BreakStatement> {
+        let mut breaks = Vec::new();
+        self.collect_breaks_from_block(block, &mut breaks);
+        breaks
+    }
+
+    fn collect_breaks_from_block<'a>(&self, block: &'a Block, breaks: &mut Vec<&'a BreakStatement>) {
+        for statement in &block.statements {
+            self.collect_breaks_from_statement(statement, breaks);
+        }
+    }
+
+    fn collect_breaks_from_statement<'a>(&self, statement: &'a Statement, breaks: &mut Vec<&'a BreakStatement>) {
+        match statement {
+            Statement::Break(break_stmt) => {
+                breaks.push(break_stmt);
+            }
+            Statement::Expression(expr) => {
+                self.collect_breaks_from_expression(expr, breaks);
+            }
+            Statement::VariableDeclaration(var_decl) => {
+                self.collect_breaks_from_expression(&var_decl.initializer, breaks);
+            }
+            Statement::Yield(_) => {
+                // Yields don't contain breaks
+            }
+        }
+    }
+
+    fn collect_breaks_from_expression<'a>(&self, expression: &'a Expression, breaks: &mut Vec<&'a BreakStatement>) {
+        match expression {
+            Expression::Block(block) => {
+                self.collect_breaks_from_block(block, breaks);
+            }
+            Expression::If(if_expr) => {
+                // Check condition for breaks
+                self.collect_breaks_from_expression(&if_expr.condition, breaks);
+                // Check then block
+                self.collect_breaks_from_block(&if_expr.then_block, breaks);
+                // Check else-if branches
+                for (else_if_cond, else_if_block) in &if_expr.else_ifs {
+                    self.collect_breaks_from_expression(else_if_cond, breaks);
+                    self.collect_breaks_from_block(else_if_block, breaks);
+                }
+                // Check else block
+                if let Some(else_block) = &if_expr.else_block {
+                    self.collect_breaks_from_block(else_block, breaks);
+                }
+            }
+            Expression::While(_) => {
+                // Stop here - don't recurse into nested loops
+                // Breaks inside nested loops belong to those loops, not this one
+            }
+            Expression::Binary(binary) => {
+                self.collect_breaks_from_expression(&binary.left, breaks);
+                self.collect_breaks_from_expression(&binary.right, breaks);
+            }
+            Expression::Unary(unary) => {
+                self.collect_breaks_from_expression(&unary.operand, breaks);
+            }
+            Expression::Index(index_expr) => {
+                self.collect_breaks_from_expression(&index_expr.array, breaks);
+                self.collect_breaks_from_expression(&index_expr.index, breaks);
+            }
+            Expression::ArrayLiteral(elements) => {
+                for elem in elements {
+                    self.collect_breaks_from_expression(elem, breaks);
+                }
+            }
+            Expression::Grouping(expr) => {
+                self.collect_breaks_from_expression(expr, breaks);
+            }
+            // Literals and identifiers don't contain breaks
+            Expression::Integer(_) | Expression::Float(_) | Expression::Boolean(_)
+            | Expression::Void | Expression::Identifier(_) => {}
+        }
     }
 
     fn lookup_variable(&self, name: &str) -> Result<TypeVar, String> {
@@ -581,6 +791,12 @@ impl TypeChecker {
                     value: typed_value,
                 }))
             }
+            Statement::Break(break_stmt) => {
+                let typed_value = self.type_expression(&break_stmt.value)?;
+                Ok(TypedStatement::Break(crate::typed_ast::TypedBreakStatement {
+                    value: typed_value,
+                }))
+            }
             Statement::Expression(expr) => {
                 Ok(TypedStatement::Expression(self.type_expression(expr)?))
             }
@@ -792,47 +1008,133 @@ impl TypeChecker {
                 )))
             }
             Expression::Block(block) => {
-                // Push scope for the block
-                self.scopes.push(HashMap::new());
-
-                let mut typed_statements = Vec::new();
-                let mut block_type = Type::Void;
-
-                for statement in &block.statements {
-                    let typed_stmt = self.type_statement(statement)?;
-
-                    // Track variable declarations in the scope
-                    if let TypedStatement::VariableDeclaration(ref var_decl) = typed_stmt {
-                        let current_scope = self.scopes.last_mut().unwrap();
-                        current_scope.insert(
-                            var_decl.name.clone(),
-                            TypeVar::Concrete(var_decl.var_type.clone()),
-                        );
-                    }
-
-                    // If it's a yield, use its type as the block type
-                    if let TypedStatement::Yield(ref yield_stmt) = typed_stmt {
-                        block_type = yield_stmt.value.get_type();
-                        typed_statements.push(typed_stmt);
-                        // Yield acts as break, so stop here
-                        break;
-                    }
-                    typed_statements.push(typed_stmt);
-                }
-
-                // Pop scope
-                self.scopes.pop();
-
-                Ok(TypedExpression::Block(TypedBlock {
-                    statements: typed_statements,
-                    block_type,
-                }))
+                let typed_block = self.type_block(block)?;
+                Ok(TypedExpression::Block(typed_block))
             }
+            Expression::If(if_expr) => self.type_if_expression(if_expr),
+            Expression::While(while_expr) => self.type_while_expression(while_expr),
             Expression::Grouping(expr) => {
                 let typed = self.type_expression_with_hint(expr, hint)?;
                 Ok(TypedExpression::Grouping(Box::new(typed)))
             }
         }
+    }
+
+    fn type_if_expression(&mut self, if_expr: &crate::ast::IfExpr) -> Result<TypedExpression, String> {
+        // Type the condition
+        let typed_condition = self.type_expression(&if_expr.condition)?;
+
+        // Type the then block
+        let typed_then_block = self.type_block(&if_expr.then_block)?;
+
+        // Type else-if branches
+        let mut typed_else_ifs = Vec::new();
+        for (else_if_condition, else_if_block) in &if_expr.else_ifs {
+            let typed_else_if_condition = self.type_expression(else_if_condition)?;
+            let typed_else_if_block = self.type_block(else_if_block)?;
+            typed_else_ifs.push((typed_else_if_condition, typed_else_if_block));
+        }
+
+        // Type else block if present
+        let typed_else_block = if let Some(else_block) = &if_expr.else_block {
+            Some(self.type_block(else_block)?)
+        } else {
+            None
+        };
+
+        // Determine result type (we already did type checking, so we can look at the first branch)
+        let result_type = typed_then_block.block_type.clone();
+
+        Ok(TypedExpression::If(Box::new(crate::typed_ast::TypedIfExpr {
+            condition: typed_condition,
+            then_block: typed_then_block,
+            else_ifs: typed_else_ifs,
+            else_block: typed_else_block,
+            result_type,
+        })))
+    }
+
+    fn type_while_expression(&mut self, while_expr: &crate::ast::WhileExpr) -> Result<TypedExpression, String> {
+        // Type the condition
+        let typed_condition = self.type_expression(&while_expr.condition)?;
+
+        // Find all breaks in the body (excluding nested loops)
+        let breaks = self.find_all_breaks(&while_expr.body);
+
+        // Set loop context and type the body
+        let old_in_loop = self.in_loop;
+        self.in_loop = true;
+        let typed_body = self.type_block(&while_expr.body)?;
+        self.in_loop = old_in_loop;
+
+        // Type the else block if present
+        let typed_else_block = if let Some(else_block) = &while_expr.else_block {
+            Some(self.type_block(else_block)?)
+        } else {
+            None
+        };
+
+        // Compute result type based on breaks (not the body's type)
+        let result_type = if !breaks.is_empty() {
+            // Type the first break to get the result type
+            let first_break_type = self.type_expression(&breaks[0].value)?.get_type();
+            first_break_type
+        } else if let Some(ref else_block_typed) = typed_else_block {
+            // No breaks, use else block type
+            else_block_typed.block_type.clone()
+        } else {
+            // No breaks and no else block
+            Type::Void
+        };
+
+        Ok(TypedExpression::While(Box::new(crate::typed_ast::TypedWhileExpr {
+            condition: typed_condition,
+            body: typed_body,
+            else_block: typed_else_block,
+            result_type,
+        })))
+    }
+
+    fn type_block(&mut self, block: &Block) -> Result<crate::typed_ast::TypedBlock, String> {
+        // Push scope for the block
+        self.scopes.push(HashMap::new());
+
+        let mut typed_statements = Vec::new();
+        let mut block_type = Type::Void;
+
+        for statement in &block.statements {
+            let typed_stmt = self.type_statement(statement)?;
+
+            // Track variable declarations in the scope
+            if let crate::typed_ast::TypedStatement::VariableDeclaration(ref var_decl) = typed_stmt {
+                let current_scope = self.scopes.last_mut().unwrap();
+                current_scope.insert(
+                    var_decl.name.clone(),
+                    TypeVar::Concrete(var_decl.var_type.clone()),
+                );
+            }
+
+            // If it's a yield, use its type as the block type
+            if let crate::typed_ast::TypedStatement::Yield(ref yield_stmt) = typed_stmt {
+                block_type = yield_stmt.value.get_type();
+                typed_statements.push(typed_stmt);
+                // Yield acts as break from block, so stop here
+                break;
+            }
+
+            // Break statements do NOT contribute to block type
+            // They break out of the loop, not the block
+            // The loop's type is determined separately by analyzing breaks
+            typed_statements.push(typed_stmt);
+        }
+
+        // Pop scope
+        self.scopes.pop();
+
+        Ok(crate::typed_ast::TypedBlock {
+            statements: typed_statements,
+            block_type,
+        })
     }
 }
 

@@ -47,6 +47,8 @@ impl Parser {
             self.variable_declaration()
         } else if self.match_tokens(&[TokenKind::Yield]) {
             self.yield_statement()
+        } else if self.match_tokens(&[TokenKind::Break]) {
+            self.break_statement()
         } else {
             self.expression_statement()
         }
@@ -79,6 +81,11 @@ impl Parser {
     fn yield_statement(&mut self) -> Result<Statement, ParseError> {
         let value = self.expression()?;
         Ok(Statement::Yield(YieldStatement { value }))
+    }
+
+    fn break_statement(&mut self) -> Result<Statement, ParseError> {
+        let value = self.expression()?;
+        Ok(Statement::Break(BreakStatement { value }))
     }
 
     fn expression_statement(&mut self) -> Result<Statement, ParseError> {
@@ -330,6 +337,16 @@ impl Parser {
             return Ok(Expression::Identifier(self.previous().lexeme.clone()));
         }
 
+        // If expression
+        if self.match_tokens(&[TokenKind::If]) {
+            return self.if_expression();
+        }
+
+        // While loop
+        if self.match_tokens(&[TokenKind::While]) {
+            return self.while_expression();
+        }
+
         // Block
         if self.match_tokens(&[TokenKind::LBrace]) {
             return self.block();
@@ -380,6 +397,75 @@ impl Parser {
         self.consume(TokenKind::RBrace, "Expected '}' after block")?;
 
         Ok(Expression::Block(Block { statements }))
+    }
+
+    fn if_expression(&mut self) -> Result<Expression, ParseError> {
+        // Parse condition (no parentheses required)
+        let condition = self.expression()?;
+
+        // Parse then block (required)
+        self.consume(TokenKind::LBrace, "Expected '{' after if condition")?;
+        let then_block = match self.block()? {
+            Expression::Block(block) => block,
+            _ => unreachable!(),
+        };
+
+        // Parse else-if and else branches
+        let mut else_ifs = Vec::new();
+        let mut else_block = None;
+
+        while self.match_tokens(&[TokenKind::Else]) {
+            if self.match_tokens(&[TokenKind::If]) {
+                // else if branch
+                let else_if_condition = self.expression()?;
+                self.consume(TokenKind::LBrace, "Expected '{' after else if condition")?;
+                let else_if_block = match self.block()? {
+                    Expression::Block(block) => block,
+                    _ => unreachable!(),
+                };
+                else_ifs.push((else_if_condition, else_if_block));
+            } else {
+                // else branch (final)
+                self.consume(TokenKind::LBrace, "Expected '{' after else")?;
+                else_block = Some(match self.block()? {
+                    Expression::Block(block) => block,
+                    _ => unreachable!(),
+                });
+                break; // else must be last
+            }
+        }
+
+        Ok(Expression::If(Box::new(IfExpr {
+            condition,
+            then_block,
+            else_ifs,
+            else_block,
+        })))
+    }
+
+    fn while_expression(&mut self) -> Result<Expression, ParseError> {
+        // Parse condition (no parentheses required)
+        let condition = self.expression()?;
+
+        // Parse body block (required)
+        self.consume(TokenKind::LBrace, "Expected '{' after while condition")?;
+        let body = match self.block()? {
+            Expression::Block(block) => block,
+            _ => unreachable!(),
+        };
+
+        // Parse optional else block
+        let else_block = if self.match_tokens(&[TokenKind::Else]) {
+            self.consume(TokenKind::LBrace, "Expected '{' after else")?;
+            Some(match self.block()? {
+                Expression::Block(block) => block,
+                _ => unreachable!(),
+            })
+        } else {
+            None
+        };
+
+        Ok(Expression::While(Box::new(WhileExpr { condition, body, else_block })))
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
