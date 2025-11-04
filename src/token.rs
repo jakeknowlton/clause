@@ -89,11 +89,14 @@ pub enum TokenKind {
     Yield, // <-
 
     // Delimiters
-    LParen, // (
-    RParen, // )
-    LBrace, // {
-    RBrace, // }
-    Colon,  // :
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    LBracket, // [
+    RBracket, // ]
+    Colon,    // :
+    Comma,    // ,
 
     // Special
     Eof,

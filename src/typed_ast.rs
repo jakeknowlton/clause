@@ -33,6 +33,7 @@ pub enum TypedExpression {
     Float(String, Type),   // value, resolved type
     Boolean(bool),
     Void,
+    ArrayLiteral(Vec<TypedExpression>, Type), // elements, resolved array type
 
     // Identifier with resolved type
     Identifier(String, Type),
@@ -42,6 +43,9 @@ pub enum TypedExpression {
 
     // Unary operations with resolved type
     Unary(Box<TypedUnaryExpr>),
+
+    // Array indexing with resolved element type
+    Index(Box<TypedIndexExpr>),
 
     // Block expression with resolved type
     Block(TypedBlock),
@@ -57,9 +61,11 @@ impl TypedExpression {
             TypedExpression::Float(_, ty) => ty.clone(),
             TypedExpression::Boolean(_) => Type::Bool,
             TypedExpression::Void => Type::Void,
+            TypedExpression::ArrayLiteral(_, ty) => ty.clone(),
             TypedExpression::Identifier(_, ty) => ty.clone(),
             TypedExpression::Binary(binary) => binary.result_type.clone(),
             TypedExpression::Unary(unary) => unary.result_type.clone(),
+            TypedExpression::Index(index) => index.element_type.clone(),
             TypedExpression::Block(block) => block.block_type.clone(),
             TypedExpression::Grouping(expr) => expr.get_type(),
         }
@@ -79,6 +85,13 @@ pub struct TypedUnaryExpr {
     pub operator: UnaryOp,
     pub operand: TypedExpression,
     pub result_type: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedIndexExpr {
+    pub array: TypedExpression,
+    pub index: TypedExpression,
+    pub element_type: Type, // Type of the result (array's element type)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,11 +144,24 @@ impl fmt::Display for TypedExpression {
             TypedExpression::Float(val, ty) => write!(f, "{}:{}", val, ty),
             TypedExpression::Boolean(val) => write!(f, "{}", val),
             TypedExpression::Void => write!(f, "void"),
+            TypedExpression::ArrayLiteral(elements, ty) => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]:{}", ty)
+            }
             TypedExpression::Identifier(name, ty) => write!(f, "{}:{}", name, ty),
             TypedExpression::Binary(binary) => {
                 write!(f, "({} {} {})", binary.left, binary.operator, binary.right)
             }
             TypedExpression::Unary(unary) => write!(f, "({}{})", unary.operator, unary.operand),
+            TypedExpression::Index(index) => {
+                write!(f, "{}[{}]:{}", index.array, index.index, index.element_type)
+            }
             TypedExpression::Block(block) => write!(f, "{}", block),
             TypedExpression::Grouping(expr) => write!(f, "({})", expr),
         }

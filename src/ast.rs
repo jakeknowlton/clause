@@ -32,6 +32,7 @@ pub enum Expression {
     Float(String),
     Boolean(bool),
     Void,
+    ArrayLiteral(Vec<Expression>),
 
     // Identifier
     Identifier(String),
@@ -41,6 +42,9 @@ pub enum Expression {
 
     // Unary operations
     Unary(Box<UnaryExpr>),
+
+    // Array indexing
+    Index(Box<IndexExpr>),
 
     // Block expression
     Block(Block),
@@ -60,6 +64,12 @@ pub struct BinaryExpr {
 pub struct UnaryExpr {
     pub operator: UnaryOp,
     pub operand: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexExpr {
+    pub array: Expression,
+    pub index: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +139,7 @@ pub enum Type {
     F64,
     Bool,
     Void,
+    Array(Box<Type>, usize), // [Type, N] - element type and size
 }
 
 impl fmt::Display for Type {
@@ -140,6 +151,7 @@ impl fmt::Display for Type {
             Type::F64 => write!(f, "F64"),
             Type::Bool => write!(f, "Bool"),
             Type::Void => write!(f, "Void"),
+            Type::Array(elem_type, size) => write!(f, "[{}, {}]", elem_type, size),
         }
     }
 }
@@ -188,11 +200,22 @@ impl fmt::Display for Expression {
             Expression::Float(val) => write!(f, "{}", val),
             Expression::Boolean(val) => write!(f, "{}", val),
             Expression::Void => write!(f, "void"),
+            Expression::ArrayLiteral(elements) => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
             Expression::Identifier(name) => write!(f, "{}", name),
             Expression::Binary(binary) => {
                 write!(f, "({} {} {})", binary.left, binary.operator, binary.right)
             }
             Expression::Unary(unary) => write!(f, "({}{})", unary.operator, unary.operand),
+            Expression::Index(index) => write!(f, "{}[{}]", index.array, index.index),
             Expression::Block(block) => write!(f, "{}", block),
             Expression::Grouping(expr) => write!(f, "({})", expr),
         }

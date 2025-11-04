@@ -13,6 +13,7 @@ enum TypeVar {
     Concrete(Type),
     IntVar(usize),
     FloatVar(usize),
+    ArrayVar(usize, Option<Box<TypeVar>>, usize),
 }
 
 impl std::fmt::Display for TypeVar {
@@ -21,6 +22,7 @@ impl std::fmt::Display for TypeVar {
             TypeVar::Concrete(t) => write!(f, "{}", t),
             TypeVar::IntVar(id) => write!(f, "?Int{}", id),
             TypeVar::FloatVar(id) => write!(f, "?Float{}", id),
+            TypeVar::ArrayVar(id, _, _) => write!(f, "?Array{}", id),
         }
     }
 }
@@ -56,6 +58,15 @@ impl TypeChecker {
         let id = self.next_var_id;
         self.next_var_id += 1;
         TypeVar::FloatVar(id)
+    }
+
+    fn fresh_array_var(&mut self, ty: Option<TypeVar>, size: usize) -> TypeVar {
+        let id = self.next_var_id;
+        self.next_var_id += 1;
+        TypeVar::ArrayVar(id, match ty {
+            Some(t) => Some(Box::new(t)),
+            None => None,
+        }, size)
     }
 
     fn add_constraint(&mut self, t1: TypeVar, t2: TypeVar) {
@@ -145,9 +156,11 @@ impl TypeChecker {
             Expression::Float(_) => Ok(self.fresh_float_var()),
             Expression::Boolean(_) => Ok(TypeVar::Concrete(Type::Bool)),
             Expression::Void => Ok(TypeVar::Concrete(Type::Void)),
+            Expression::ArrayLiteral(elements) => self.check_array_literal(elements),
             Expression::Identifier(name) => self.lookup_variable(name),
             Expression::Binary(binary) => self.check_binary_expression(binary),
             Expression::Unary(unary) => self.check_unary_expression(unary),
+            Expression::Index(index_expr) => self.check_index_expression(index_expr),
             Expression::Block(block) => self.check_block(block),
             Expression::Grouping(expr) => self.infer_expression(expr),
         }
@@ -246,6 +259,55 @@ impl TypeChecker {
                 self.add_constraint(operand_type, TypeVar::Concrete(Type::Bool));
                 Ok(TypeVar::Concrete(Type::Bool))
             }
+        }
+    }
+
+    fn check_array_literal(&mut self, elements: &[Expression]) -> Result<TypeVar, String> {
+        // Infer type of first element
+        let first_type = if !elements.is_empty() {
+            let first = self.infer_expression(&elements[0])?;
+            // All subsequent elements must have the same type
+            for element in elements.iter().skip(1) {
+                let elem_type = self.infer_expression(element)?;
+                self.add_constraint(first.clone(), elem_type);
+            }
+            Some(first)
+        } else {
+            // Empty array - element type will need to come from context/annotation
+            None
+        };
+
+        // Return array type with inferred element type and size
+        Ok(self.fresh_array_var(first_type, elements.len()))
+    }
+
+    fn check_index_expression(&mut self, index_expr: &crate::ast::IndexExpr) -> Result<TypeVar, String> {
+        let array_type = self.infer_expression(&index_expr.array)?;
+        let index_type = self.infer_expression(&index_expr.index)?;
+
+        // Index must be an integer type (any integer type is fine)
+        match &index_type {
+            TypeVar::IntVar(_) => {}, // OK
+            TypeVar::Concrete(Type::Signed(_)) | TypeVar::Concrete(Type::Unsigned(_)) => {}, // OK
+            TypeVar::FloatVar(_) => {
+                return Err("Array index must be an integer, found F64".to_string());
+            }
+            TypeVar::Concrete(ty) => {
+                return Err(format!("Array index must be an integer, found {}", ty));
+            }
+            TypeVar::ArrayVar(..) => {
+                return Err("Array index must be an integer, found Array".to_string());
+            }
+        }
+
+        // Extract element type from array type
+        match array_type {
+            TypeVar::Concrete(Type::Array(elem_type, _)) => Ok(TypeVar::Concrete(*elem_type)),
+            TypeVar::ArrayVar(_, Some(elem_type), _) => Ok(*elem_type),
+            TypeVar::ArrayVar(_, None, _) => {
+                Err("Cannot infer element type of array without type annotation".to_string())
+            }
+            _ => Err(format!("Cannot index into non-array type")),
         }
     }
 
@@ -350,6 +412,43 @@ impl TypeChecker {
                 Ok(())
             }
 
+            // ArrayVar can only unify with Array types
+            (TypeVar::ArrayVar(v, vty, len), TypeVar::Concrete(ty))
+            | (TypeVar::Concrete(ty), TypeVar::ArrayVar(v, vty, len)) => {
+                match &ty {
+                    Type::Array(elem_ty, tlen) => {
+                        // Arrays can unify only if their lengths are the same
+                        if len != *tlen {
+                            return Err(format!("Array size mismatch {} != {}", len, tlen));
+                        }
+                        // Arrays can unify only if their element types can unify
+                        if let Some(vty_box) = vty {
+                            self.unify(*vty_box, TypeVar::Concrete(*elem_ty.clone()))?;
+                        }
+                        self.occurs_check_array(v, &TypeVar::Concrete(ty.clone()))?;
+                        self.substitution.insert(v, TypeVar::Concrete(ty));
+                        Ok(())
+                    }
+                    _ => Err(format!("Type mismatch: Array type expected, found {}", ty))
+                }
+            }
+
+            (TypeVar::ArrayVar(v1, lty, llen), TypeVar::ArrayVar(v2, rty, rlen)) => {
+                // Arrays can unify only if their lengths are the same
+                if llen != rlen {
+                    return Err(format!("Array size mismatch {} != {}", llen, rlen));
+                }
+                // Arrays can unify only if their element types can unify
+                match (lty, &rty) {
+                    (Some(lt), Some(rt)) => {
+                        self.unify(*lt, *rt.clone())?;
+                    }
+                    (_, _) => {}
+                };
+                self.substitution.insert(v1, TypeVar::ArrayVar(v2, rty, rlen));
+                Ok(())
+            }
+
             // IntVar and FloatVar cannot unify
             (TypeVar::IntVar(_), TypeVar::FloatVar(_))
             | (TypeVar::FloatVar(_), TypeVar::IntVar(_)) => {
@@ -372,12 +471,13 @@ impl TypeChecker {
                     }
                 }
             }
+            (_, _) => Err(format!("Type mismatch: cannot unify {} with {}", t1, t2)),
         }
     }
 
     fn apply_substitution(&self, ty: &TypeVar) -> TypeVar {
         match ty {
-            TypeVar::IntVar(v) | TypeVar::FloatVar(v) => {
+            TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
                     // Recursively apply substitution
                     self.apply_substitution(substituted)
@@ -394,7 +494,7 @@ impl TypeChecker {
             TypeVar::IntVar(v) if *v == var => {
                 Err("Occurs check failed: infinite type".to_string())
             }
-            TypeVar::IntVar(v) | TypeVar::FloatVar(v) => {
+            TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
                     self.occurs_check_int(var, substituted)
                 } else {
@@ -410,9 +510,25 @@ impl TypeChecker {
             TypeVar::FloatVar(v) if *v == var => {
                 Err("Occurs check failed: infinite type".to_string())
             }
-            TypeVar::IntVar(v) | TypeVar::FloatVar(v) => {
+            TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
                 if let Some(substituted) = self.substitution.get(v) {
                     self.occurs_check_float(var, substituted)
+                } else {
+                    Ok(())
+                }
+            }
+            TypeVar::Concrete(_) => Ok(()),
+        }
+    }
+
+    fn occurs_check_array(&self, var: usize, ty: &TypeVar) -> Result<(), String> {
+        match ty {
+            TypeVar::ArrayVar(v, ..) if *v == var => {
+                Err("Occurs check failed: infinite type".to_string())
+            }
+            TypeVar::IntVar(v) | TypeVar::FloatVar(v) | TypeVar::ArrayVar(v, ..) => {
+                if let Some(substituted) = self.substitution.get(v) {
+                    self.occurs_check_array(var, substituted)
                 } else {
                     Ok(())
                 }
@@ -444,6 +560,12 @@ impl TypeChecker {
             TypeVar::FloatVar(_) => {
                 // Default to F64 for unresolved float type variables
                 Ok(Type::F64)
+            },
+            TypeVar::ArrayVar(_, ty, len) => {
+                match ty {
+                    Some(var) => Ok(Type::Array(Box::new(self.resolve_type_var(&*var)?), len)),
+                    None => Err("Unable to resolve empty array type".to_string()),
+                }
             }
         }
     }
@@ -617,6 +739,57 @@ impl TypeChecker {
                     operand: typed_operand,
                     result_type,
                 })))
+            }
+            Expression::ArrayLiteral(elements) => {
+                if let Some(ty) = hint {
+                    match &ty {
+                        Type::Array(t, _len) => {
+                            let mut typed_elements = Vec::new();
+                            for element in elements {
+                                typed_elements.push(self.type_expression_with_hint(element, Some(t))?);
+                            }
+                            Ok(TypedExpression::ArrayLiteral(typed_elements, ty.clone()))
+                        }
+                        _ => unreachable!()
+                    }
+                } else {
+                    if elements.is_empty() {
+                        Err("Cannot infer type of empty array literal without type annotation".to_string())
+                    } else {
+                        let type_var = self.infer_expression(expression)?;
+                        let resolved_type = self.resolve_type_var(&type_var)?;
+                        match &resolved_type {
+                            Type::Array(ty, _) => {
+                                let mut typed_elements = Vec::new();
+                                for element in elements {
+                                    typed_elements.push(self.type_expression_with_hint(element, Some(&*ty))?);
+                                }
+                                Ok(TypedExpression::ArrayLiteral(typed_elements, resolved_type))
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            Expression::Index(index_expr) => {
+                let typed_array = self.type_expression(&index_expr.array)?;
+                let typed_index = self.type_expression(&index_expr.index)?;
+
+                // Extract element type from array type
+                let element_type = match typed_array.get_type() {
+                    Type::Array(elem_type, _) => *elem_type,
+                    other => {
+                        return Err(format!("Cannot index into non-array type {}", other));
+                    }
+                };
+
+                Ok(TypedExpression::Index(Box::new(
+                    crate::typed_ast::TypedIndexExpr {
+                        array: typed_array,
+                        index: typed_index,
+                        element_type,
+                    },
+                )))
             }
             Expression::Block(block) => {
                 // Push scope for the block

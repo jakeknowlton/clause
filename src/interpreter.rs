@@ -49,6 +49,19 @@ impl Interpreter {
         Ok(value)
     }
 
+    fn get_array_idx(&mut self, value: &Value) -> Result<usize, String> {
+        match *value {
+            Value::SignedInt { value, .. } => {
+                if value < 0 {
+                    return Err(format!("Array index cannot be negative: {}", value));
+                }
+                Ok(value as usize)
+            }
+            Value::UnsignedInt { value, .. } => Ok(value as usize),
+            _ => Err("Array index must be an integer".to_string()),
+        }
+    }
+
     fn evaluate_expression(&mut self, expression: &TypedExpression) -> Result<Value, String> {
         match expression {
             TypedExpression::Integer(s, ty) => {
@@ -69,9 +82,35 @@ impl Interpreter {
             }
             TypedExpression::Boolean(b) => Ok(Value::Boolean(*b)),
             TypedExpression::Void => Ok(Value::Void),
+            TypedExpression::ArrayLiteral(elements, arr_type) => {
+                let mut values = Vec::new();
+                for elem in elements {
+                    values.push(self.evaluate_expression(elem)?);
+                }
+
+                // Extract element type from array type
+                let element_type = match arr_type {
+                    Type::Array(et, _) => *et.clone(),
+                    _ => return Err(format!("Invalid array type: {}", arr_type)),
+                };
+
+                Ok(Value::Array {
+                    elements: values,
+                    element_type,
+                })
+            }
             TypedExpression::Identifier(name, ..) => self.environment.get(name),
             TypedExpression::Binary(binary) => self.evaluate_binary(binary),
             TypedExpression::Unary(unary) => self.evaluate_unary(unary),
+            TypedExpression::Index(index_expr) => {
+                let array_val = self.evaluate_expression(&index_expr.array)?;
+                let index_val = self.evaluate_expression(&index_expr.index)?;
+
+                let idx = self.get_array_idx(&index_val)?;
+
+                // Index into array
+                array_val.index(idx)
+            }
             TypedExpression::Block(block) => self.evaluate_block(block),
             TypedExpression::Grouping(expr) => self.evaluate_expression(expr),
         }
@@ -183,83 +222,177 @@ impl Interpreter {
     }
 
     fn evaluate_assignment_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, String> {
-        // Get the target identifier
-        let target = match &binary.left {
-            TypedExpression::Identifier(name, _ty) => name,
-            _ => return Err("Invalid assignment target".to_string()),
-        };
-
         // Evaluate the right-hand side
-        let new_value = self.evaluate_expression(&binary.right)?;
+        let right_value = self.evaluate_expression(&binary.right)?;
 
+        match &binary.left {
+            TypedExpression::Identifier(name, _ty) => {
+                self.evaluate_identifier_assignment(name, &binary.operator, right_value)
+            }
+            TypedExpression::Index(index_expr) => {
+                self.evaluate_index_assignment(index_expr, &binary.operator, right_value)
+            }
+            _ => Err("Invalid assignment target".to_string()),
+        }
+    }
+
+    fn evaluate_identifier_assignment(
+        &mut self,
+        name: &str,
+        operator: &BinaryOp,
+        right_value: Value,
+    ) -> Result<Value, String> {
         // Apply the assignment operator
-        match binary.operator {
+        match operator {
             BinaryOp::Assign => {
-                self.environment.assign(target, new_value.clone())?;
-                Ok(new_value)
+                self.environment.assign(name, right_value.clone())?;
+                Ok(right_value)
             }
             BinaryOp::PlusAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.add(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.add(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::MinusAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.subtract(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.subtract(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::MultAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.multiply(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.multiply(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::DivAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.divide(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.divide(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::ModAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.modulo(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.modulo(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::AndAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.bitwise_and(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.bitwise_and(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::OrAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.bitwise_or(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.bitwise_or(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::XorAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.bitwise_xor(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.bitwise_xor(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::LShiftAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.left_shift(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.left_shift(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
             BinaryOp::RShiftAssign => {
-                let current = self.environment.get(target)?;
-                let result = current.right_shift(&new_value)?;
-                self.environment.assign(target, result.clone())?;
+                let current = self.environment.get(name)?;
+                let result = current.right_shift(&right_value)?;
+                self.environment.assign(name, result.clone())?;
                 Ok(result)
             }
-            _ => unreachable!("Non-assignment operator passed to evaluate_assignment_binary"),
+            _ => unreachable!("Non-assignment operator passed to evaluate_identifier_assignment"),
         }
+    }
+
+    fn evaluate_index_assignment(
+        &mut self,
+        index_expr: &crate::typed_ast::TypedIndexExpr,
+        operator: &BinaryOp,
+        right_value: Value,
+    ) -> Result<Value, String> {
+        // For indexed assignment like arr[0] = 42 or arr[i] += 10
+        // We need to handle this differently based on whether array is an identifier or a complex expression
+
+        // For now, we only support arr[index] where arr is an identifier
+        // Extract the array identifier (for simplicity, only support direct identifier for now)
+        let (array_name, index_val) = match &index_expr.array {
+            TypedExpression::Identifier(name, _) => {
+                let idx_val = self.evaluate_expression(&index_expr.index)?;
+                let idx = self.get_array_idx(&idx_val)?;
+                (name.clone(), idx)
+            }
+            _ => {
+                return Err(
+                    "Only simple array indexing (e.g., arr[i]) is supported for assignment"
+                        .to_string(),
+                );
+            }
+        };
+
+        // Get the current array
+        let mut array = self.environment.get(&array_name)?;
+
+        // Compute the new value to assign
+        let new_value = match operator {
+            BinaryOp::Assign => right_value,
+            BinaryOp::PlusAssign => {
+                let current = array.index(index_val)?;
+                current.add(&right_value)?
+            }
+            BinaryOp::MinusAssign => {
+                let current = array.index(index_val)?;
+                current.subtract(&right_value)?
+            }
+            BinaryOp::MultAssign => {
+                let current = array.index(index_val)?;
+                current.multiply(&right_value)?
+            }
+            BinaryOp::DivAssign => {
+                let current = array.index(index_val)?;
+                current.divide(&right_value)?
+            }
+            BinaryOp::ModAssign => {
+                let current = array.index(index_val)?;
+                current.modulo(&right_value)?
+            }
+            BinaryOp::AndAssign => {
+                let current = array.index(index_val)?;
+                current.bitwise_and(&right_value)?
+            }
+            BinaryOp::OrAssign => {
+                let current = array.index(index_val)?;
+                current.bitwise_or(&right_value)?
+            }
+            BinaryOp::XorAssign => {
+                let current = array.index(index_val)?;
+                current.bitwise_xor(&right_value)?
+            }
+            BinaryOp::LShiftAssign => {
+                let current = array.index(index_val)?;
+                current.left_shift(&right_value)?
+            }
+            BinaryOp::RShiftAssign => {
+                let current = array.index(index_val)?;
+                current.right_shift(&right_value)?
+            }
+            _ => unreachable!("Non-assignment operator passed to evaluate_index_assignment"),
+        };
+
+        // Set the new value in the array
+        array.set_index(index_val, new_value.clone())?;
+
+        // Update the environment with the modified array
+        self.environment.assign(&array_name, array)?;
+
+        Ok(new_value)
     }
 
     fn apply_binary_operator(
@@ -871,5 +1004,325 @@ mod tests {
                 bits: 32
             }
         );
+    }
+
+    // ============================================================================
+    // Array Interpretation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_array_literal_evaluation() {
+        let source = "[1, 2, 3]";
+        let result = interpret(source).unwrap();
+        match result {
+            Value::Array { elements, element_type } => {
+                assert_eq!(elements.len(), 3);
+                assert_eq!(element_type, Type::Signed(64));
+                match &elements[0] {
+                    Value::SignedInt { value, bits } => {
+                        assert_eq!(*value, 1);
+                        assert_eq!(*bits, 64);
+                    }
+                    _ => panic!("Expected SignedInt"),
+                }
+            }
+            _ => panic!("Expected array"),
+        }
+    }
+
+    #[test]
+    fn test_array_with_explicit_type() {
+        let source = "let arr: [I32, 3] = [10, 20, 30]\narr";
+        let result = interpret(source).unwrap();
+        match result {
+            Value::Array { elements, element_type } => {
+                assert_eq!(elements.len(), 3);
+                assert_eq!(element_type, Type::Signed(32));
+                match &elements[1] {
+                    Value::SignedInt { value, bits } => {
+                        assert_eq!(*value, 20);
+                        assert_eq!(*bits, 32);
+                    }
+                    _ => panic!("Expected SignedInt"),
+                }
+            }
+            _ => panic!("Expected array"),
+        }
+    }
+
+    #[test]
+    fn test_empty_array() {
+        let source = "let arr: [I32, 0] = []\narr";
+        let result = interpret(source).unwrap();
+        match result {
+            Value::Array { elements, element_type } => {
+                assert_eq!(elements.len(), 0);
+                assert_eq!(element_type, Type::Signed(32));
+            }
+            _ => panic!("Expected array"),
+        }
+    }
+
+    #[test]
+    fn test_array_indexing_evaluation() {
+        let source = "let arr = [10, 20, 30]\narr[1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 20,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_indexing_first_element() {
+        let source = "let arr = [5, 10, 15]\narr[0]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt { value: 5, bits: 64 }
+        );
+    }
+
+    #[test]
+    fn test_array_indexing_last_element() {
+        let source = "let arr = [5, 10, 15, 20]\narr[3]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 20,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_indexing_with_variable() {
+        let source = "let arr = [100, 200, 300]\nlet i = 2\narr[i]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 300,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_indexing_with_expression() {
+        let source = "let arr = [10, 20, 30, 40, 50]\nlet i = 1\narr[i + 2]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 40,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_index_out_of_bounds() {
+        let source = "let arr = [1, 2, 3]\narr[5]";
+        let result = interpret(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("out of bounds"));
+    }
+
+    #[test]
+    fn test_array_index_negative() {
+        let source = "let arr = [1, 2, 3]\nlet i: I32 = -1\narr[i]";
+        let result = interpret(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be negative"));
+    }
+
+    #[test]
+    fn test_nested_array_evaluation() {
+        let source = "let matrix = [[1, 2], [3, 4]]\nmatrix";
+        let result = interpret(source).unwrap();
+        match result {
+            Value::Array { elements, element_type } => {
+                assert_eq!(elements.len(), 2);
+                match element_type {
+                    Type::Array(inner_type, size) => {
+                        assert_eq!(*inner_type, Type::Signed(64));
+                        assert_eq!(size, 2);
+                    }
+                    _ => panic!("Expected array element type"),
+                }
+            }
+            _ => panic!("Expected array"),
+        }
+    }
+
+    #[test]
+    fn test_chained_array_indexing() {
+        let source = "let matrix = [[1, 2], [3, 4]]\nmatrix[0][1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt { value: 2, bits: 64 }
+        );
+    }
+
+    #[test]
+    fn test_chained_array_indexing_second_row() {
+        let source = "let matrix = [[10, 20], [30, 40]]\nmatrix[1][0]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 30,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_element_assignment() {
+        let source = "let arr = [1, 2, 3]\narr[1] = 42\narr[1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 42,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_element_assignment_first() {
+        let source = "let arr = [10, 20, 30]\narr[0] = 99\narr[0]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 99,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_compound_assignment_add() {
+        let source = "let arr = [5, 10, 15]\narr[1] += 20\narr[1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 30,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_compound_assignment_subtract() {
+        let source = "let arr = [100, 50, 25]\narr[0] -= 30\narr[0]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 70,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_compound_assignment_multiply() {
+        let source = "let arr = [2, 3, 4]\narr[1] *= 10\narr[1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 30,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_arithmetic_on_elements() {
+        let source = "let arr = [10, 20, 30]\nlet sum = arr[0] + arr[1] + arr[2]\nsum";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 60,
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_of_floats() {
+        let source = "let arr: [F32, 3] = [1.5, 2.5, 3.5]\narr[1]";
+        let result = interpret(source).unwrap();
+        assert_eq!(result, Value::Single(2.5));
+    }
+
+    #[test]
+    fn test_array_of_bools() {
+        let source = "let arr = [true, false, true]\narr[2]";
+        let result = interpret(source).unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_array_in_block() {
+        let source = "{\n  let arr = [1, 2, 3]\n  <- arr[1]\n}";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt { value: 2, bits: 64 }
+        );
+    }
+
+    #[test]
+    fn test_multiple_array_operations() {
+        let source = "let arr = [5, 10, 15]\narr[0] += 5\narr[1] *= 2\narr[2] -= 5\narr[0] + arr[1] + arr[2]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 40, // (5+5) + (10*2) + (15-5) = 10 + 20 + 10
+                bits: 64
+            }
+        );
+    }
+
+    #[test]
+    fn test_array_assignment_out_of_bounds() {
+        let source = "let arr = [1, 2, 3]\narr[5] = 42";
+        let result = interpret(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("out of bounds"));
+    }
+
+    #[test]
+    fn test_index_array_literal() {
+        let source = "let val = [1, 2, 3][0]";
+        let result = interpret(source).unwrap();
+        assert_eq!(
+            result,
+            Value::SignedInt {
+                value: 1,
+                bits: 64
+            }
+        )
+    }
+
+    #[test]
+    fn test_index_assignment_array_literal() {
+        let source = "[1, 2, 3][0] -= 30";
+        let result = interpret(source).unwrap();
+        assert_eq!(result.type_name(), "[I64, 3]")
     }
 }

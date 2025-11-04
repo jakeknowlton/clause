@@ -1,3 +1,4 @@
+use crate::ast::Type;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,6 +9,7 @@ pub enum Value {
     Single(f32),
     Boolean(bool),
     Void,
+    Array { elements: Vec<Value>, element_type: Type },
 }
 
 impl Value {
@@ -19,6 +21,9 @@ impl Value {
             Value::Single(_) => "F32".to_string(),
             Value::Boolean(_) => "Boolean".to_string(),
             Value::Void => "Void".to_string(),
+            Value::Array { elements, element_type } => {
+                format!("[{}, {}]", element_type, elements.len())
+            }
         }
     }
 
@@ -104,6 +109,63 @@ impl Value {
     pub fn new_unsigned(value: u128, bits: u8) -> Result<Self, String> {
         Self::validate_unsigned(value, bits)?;
         Ok(Value::UnsignedInt { value, bits })
+    }
+
+    /// Index into an array value, returning the element at the given index
+    pub fn index(&self, idx: usize) -> Result<Value, String> {
+        match self {
+            Value::Array { elements, .. } => {
+                if idx >= elements.len() {
+                    Err(format!(
+                        "Array index out of bounds: index {} but length is {}",
+                        idx,
+                        elements.len()
+                    ))
+                } else {
+                    Ok(elements[idx].clone())
+                }
+            }
+            _ => Err(format!("Cannot index into non-array type {}", self.type_name())),
+        }
+    }
+
+    /// Set an element in an array at the given index
+    pub fn set_index(&mut self, idx: usize, value: Value) -> Result<(), String> {
+        match self {
+            Value::Array { elements, element_type } => {
+                if idx >= elements.len() {
+                    return Err(format!(
+                        "Array index out of bounds: index {} but length is {}",
+                        idx,
+                        elements.len()
+                    ));
+                }
+
+                // Verify the value matches the array's element type
+                let value_type = match &value {
+                    Value::SignedInt { bits, .. } => Type::Signed(*bits),
+                    Value::UnsignedInt { bits, .. } => Type::Unsigned(*bits),
+                    Value::Single(_) => Type::F32,
+                    Value::Double(_) => Type::F64,
+                    Value::Boolean(_) => Type::Bool,
+                    Value::Void => Type::Void,
+                    Value::Array { elements: elems, element_type: elem_ty } => {
+                        Type::Array(Box::new(elem_ty.clone()), elems.len())
+                    }
+                };
+
+                if &value_type != element_type {
+                    return Err(format!(
+                        "Type mismatch: cannot assign {} to array of {}",
+                        value_type, element_type
+                    ));
+                }
+
+                elements[idx] = value;
+                Ok(())
+            }
+            _ => Err(format!("Cannot index into non-array type {}", self.type_name())),
+        }
     }
 
     fn new_signed_from_operation(value: i128, bits: u8, operation: &str) -> Result<Self, String> {
@@ -898,6 +960,16 @@ impl fmt::Display for Value {
             Value::Single(s) => write!(f, "{}", s),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Void => write!(f, "void"),
+            Value::Array { elements, .. } => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }

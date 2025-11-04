@@ -287,7 +287,23 @@ impl Parser {
             return Ok(Expression::Unary(Box::new(UnaryExpr { operator, operand })));
         }
 
-        self.primary()
+        self.postfix()
+    }
+
+    fn postfix(&mut self) -> Result<Expression, ParseError> {
+        let mut expr = self.primary()?;
+
+        // Handle chained indexing: arr[i][j]
+        while self.match_tokens(&[TokenKind::LBracket]) {
+            let index = self.expression()?;
+            self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
+            expr = Expression::Index(Box::new(crate::ast::IndexExpr {
+                array: expr,
+                index,
+            }));
+        }
+
+        Ok(expr)
     }
 
     fn primary(&mut self) -> Result<Expression, ParseError> {
@@ -319,6 +335,11 @@ impl Parser {
             return self.block();
         }
 
+        // Array literal
+        if self.match_tokens(&[TokenKind::LBracket]) {
+            return self.parse_array_literal();
+        }
+
         // Grouping
         if self.match_tokens(&[TokenKind::LParen]) {
             let expr = self.expression()?;
@@ -330,6 +351,23 @@ impl Parser {
             message: "Expected expression".to_string(),
             token: self.peek().clone(),
         })
+    }
+
+    fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
+        let mut elements = Vec::new();
+
+        // Handle empty array []
+        if !self.check(&TokenKind::RBracket) {
+            elements.push(self.expression()?);
+
+            while self.match_tokens(&[TokenKind::Comma]) {
+                elements.push(self.expression()?);
+            }
+        }
+
+        self.consume(TokenKind::RBracket, "Expected ']' after array elements")?;
+
+        Ok(Expression::ArrayLiteral(elements))
     }
 
     fn block(&mut self) -> Result<Expression, ParseError> {
@@ -345,6 +383,25 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
+        // Check for array type [Type, N]
+        if self.check(&TokenKind::LBracket) {
+            self.advance(); // consume '['
+
+            let element_type = self.parse_type()?; // recursively parse element type
+
+            self.consume(TokenKind::Comma, "Expected ',' after array element type")?;
+
+            let size_token = self.consume(TokenKind::IntegerLiteral, "Expected integer literal for array size")?;
+            let size = size_token.lexeme.parse::<usize>().map_err(|_| ParseError {
+                message: format!("Invalid array size: {}", size_token.lexeme),
+                token: size_token.clone(),
+            })?;
+
+            self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
+
+            return Ok(Type::Array(Box::new(element_type), size));
+        }
+
         let token = self.peek().clone();
 
         let type_name = match &token.kind {
@@ -859,5 +916,229 @@ mod tests {
     #[test]
     fn test_parse_error_unclosed_block() {
         assert!(parse("{ let x = 5").is_err());
+    }
+
+    // ============================================================================
+    // Array Parsing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_array_literal_empty() {
+        match parse_first_expr("[]") {
+            Expression::ArrayLiteral(elements) => {
+                assert_eq!(elements.len(), 0);
+            }
+            _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_literal_single_element() {
+        match parse_first_expr("[42]") {
+            Expression::ArrayLiteral(elements) => {
+                assert_eq!(elements.len(), 1);
+                match &elements[0] {
+                    Expression::Integer(val) => assert_eq!(val, "42"),
+                    _ => panic!("Expected integer element"),
+                }
+            }
+            _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_literal_multiple_elements() {
+        match parse_first_expr("[1, 2, 3, 4, 5]") {
+            Expression::ArrayLiteral(elements) => {
+                assert_eq!(elements.len(), 5);
+                match &elements[0] {
+                    Expression::Integer(val) => assert_eq!(val, "1"),
+                    _ => panic!("Expected integer element"),
+                }
+                match &elements[4] {
+                    Expression::Integer(val) => assert_eq!(val, "5"),
+                    _ => panic!("Expected integer element"),
+                }
+            }
+            _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_literal_with_expressions() {
+        match parse_first_expr("[1 + 2, 3 * 4, x]") {
+            Expression::ArrayLiteral(elements) => {
+                assert_eq!(elements.len(), 3);
+                // First element should be a binary expression
+                match &elements[0] {
+                    Expression::Binary(_) => {}
+                    _ => panic!("Expected binary expression"),
+                }
+                // Third element should be identifier
+                match &elements[2] {
+                    Expression::Identifier(name) => assert_eq!(name, "x"),
+                    _ => panic!("Expected identifier"),
+                }
+            }
+            _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_array_literal() {
+        match parse_first_expr("[[1, 2], [3, 4]]") {
+            Expression::ArrayLiteral(outer_elements) => {
+                assert_eq!(outer_elements.len(), 2);
+                match &outer_elements[0] {
+                    Expression::ArrayLiteral(inner_elements) => {
+                        assert_eq!(inner_elements.len(), 2);
+                    }
+                    _ => panic!("Expected nested array literal"),
+                }
+            }
+            _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_type() {
+        let decl = parse_first_var_decl("let x: [I32, 5] = [1, 2, 3, 4, 5]");
+        assert_eq!(decl.name, "x");
+        match decl.type_annotation {
+            Some(Type::Array(elem_type, size)) => {
+                assert_eq!(*elem_type, Type::Signed(32));
+                assert_eq!(size, 5);
+            }
+            _ => panic!("Expected array type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_array_type() {
+        let decl = parse_first_var_decl("let x: [[I32, 2], 3] = [[1, 2], [3, 4], [5, 6]]");
+        match decl.type_annotation {
+            Some(Type::Array(elem_type, size)) => {
+                assert_eq!(size, 3);
+                match *elem_type {
+                    Type::Array(inner_elem_type, inner_size) => {
+                        assert_eq!(*inner_elem_type, Type::Signed(32));
+                        assert_eq!(inner_size, 2);
+                    }
+                    _ => panic!("Expected nested array type"),
+                }
+            }
+            _ => panic!("Expected array type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_indexing() {
+        match parse_first_expr("arr[0]") {
+            Expression::Index(index_expr) => {
+                match index_expr.array {
+                    Expression::Identifier(name) => assert_eq!(name, "arr"),
+                    _ => panic!("Expected identifier for array"),
+                }
+                match index_expr.index {
+                    Expression::Integer(val) => assert_eq!(val, "0"),
+                    _ => panic!("Expected integer for index"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_indexing_with_variable() {
+        match parse_first_expr("arr[i]") {
+            Expression::Index(index_expr) => {
+                match index_expr.array {
+                    Expression::Identifier(name) => assert_eq!(name, "arr"),
+                    _ => panic!("Expected identifier for array"),
+                }
+                match index_expr.index {
+                    Expression::Identifier(name) => assert_eq!(name, "i"),
+                    _ => panic!("Expected identifier for index"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_indexing_with_expression() {
+        match parse_first_expr("arr[i + 1]") {
+            Expression::Index(index_expr) => {
+                match index_expr.index {
+                    Expression::Binary(_) => {}
+                    _ => panic!("Expected binary expression for index"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_indexing() {
+        match parse_first_expr("matrix[i][j]") {
+            Expression::Index(outer_index) => {
+                // Outer index should have an Index as its array
+                match outer_index.array {
+                    Expression::Index(inner_index) => {
+                        match inner_index.array {
+                            Expression::Identifier(name) => assert_eq!(name, "matrix"),
+                            _ => panic!("Expected identifier for innermost array"),
+                        }
+                        match inner_index.index {
+                            Expression::Identifier(name) => assert_eq!(name, "i"),
+                            _ => panic!("Expected identifier for first index"),
+                        }
+                    }
+                    _ => panic!("Expected inner index expression"),
+                }
+                match outer_index.index {
+                    Expression::Identifier(name) => assert_eq!(name, "j"),
+                    _ => panic!("Expected identifier for second index"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_indexing_assignment() {
+        let program = parse("arr[0] = 42").unwrap();
+        assert_eq!(program.statements.len(), 1);
+        match &program.statements[0] {
+            Statement::Expression(Expression::Binary(binary)) => {
+                assert_eq!(binary.operator, BinaryOp::Assign);
+                match &binary.left {
+                    Expression::Index(_) => {}
+                    _ => panic!("Expected index expression on left side"),
+                }
+            }
+            _ => panic!("Expected assignment expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_literal_trailing_comma() {
+        // Trailing comma should not be allowed
+        assert!(parse("[1, 2, 3,]").is_err());
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_bracket() {
+        assert!(parse("[1, 2, 3").is_err());
+    }
+
+    #[test]
+    fn test_parse_error_missing_comma() {
+        assert!(parse("[1 2 3]").is_err());
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_index() {
+        assert!(parse("arr[0").is_err());
     }
 }

@@ -71,7 +71,10 @@ impl Lexer {
             ')' => Ok(self.make_token(TokenKind::RParen, 1, start_line, start_column)),
             '{' => Ok(self.make_token(TokenKind::LBrace, 1, start_line, start_column)),
             '}' => Ok(self.make_token(TokenKind::RBrace, 1, start_line, start_column)),
+            '[' => Ok(self.make_token(TokenKind::LBracket, 1, start_line, start_column)),
+            ']' => Ok(self.make_token(TokenKind::RBracket, 1, start_line, start_column)),
             ':' => Ok(self.make_token(TokenKind::Colon, 1, start_line, start_column)),
+            ',' => Ok(self.make_token(TokenKind::Comma, 1, start_line, start_column)),
 
             // Multi-character operators (must check these before single-char ones)
             '<' => self.lex_less_than(start_line, start_column),

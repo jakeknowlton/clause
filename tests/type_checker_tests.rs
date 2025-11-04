@@ -512,3 +512,166 @@ fn test_bitwise_flag_manipulation() {
          let has_flag = (flags & 1) != 0",
     );
 }
+
+// ============================================================================
+// Array Type Checking Tests
+// ============================================================================
+
+#[test]
+fn test_array_literal_with_inferred_type() {
+    // Array type should be inferred from elements
+    assert_type_checks("let arr = [1, 2, 3]");
+}
+
+#[test]
+fn test_array_literal_with_explicit_type() {
+    // Array with explicit type annotation
+    assert_type_checks("let arr: [I32, 3] = [1, 2, 3]");
+}
+
+#[test]
+fn test_array_literal_elements_must_match() {
+    // All elements must have the same type
+    assert_type_checks("let arr: [I32, 3] = [1, 2, 3]");
+}
+
+#[test]
+fn test_empty_array_requires_type_annotation() {
+    // Empty arrays cannot infer type
+    assert_type_error("let arr = []", "Cannot infer type of empty array");
+}
+
+#[test]
+fn test_empty_array_with_type_annotation() {
+    // Empty array with explicit type annotation should work
+    assert_type_checks("let arr: [I32, 0] = []");
+}
+
+#[test]
+fn test_array_size_mismatch() {
+    // Size in type annotation must match number of elements
+    assert_type_error("let arr: [I32, 5] = [1, 2, 3]", "Array size mismatch");
+}
+
+#[test]
+fn test_array_element_type_mismatch() {
+    // Elements must match the annotated element type
+    assert_type_error("let arr: [I32, 3] = [1, 2, 3.14]", "cannot unify");
+}
+
+#[test]
+fn test_array_mixed_element_types() {
+    // Mixed integer and float types should fail
+    assert_type_error("let arr = [1, 2.5, 3]", "cannot unify");
+}
+
+#[test]
+fn test_array_mixed_integer_types() {
+    // Mixed integer types with explicit annotations
+    assert_type_error(
+        "let x: I32 = 1\nlet y: I64 = 2\nlet arr = [x, y]",
+        "Type mismatch",
+    );
+}
+
+#[test]
+fn test_array_indexing() {
+    // Basic array indexing
+    assert_type_checks("let arr = [1, 2, 3]\narr[0]");
+}
+
+#[test]
+fn test_array_indexing_with_variable() {
+    // Indexing with variable index
+    assert_type_checks("let arr = [1, 2, 3]\nlet i = 1\narr[i]");
+}
+
+#[test]
+fn test_array_indexing_returns_element_type() {
+    // Index result should have element type
+    assert_type_checks("let arr: [I32, 3] = [1, 2, 3]\nlet x: I32 = arr[0]");
+}
+
+#[test]
+fn test_array_index_must_be_integer() {
+    // Index must be an integer type
+    assert_type_error("let arr = [1, 2, 3]\narr[1.5]", "Array index must be an integer");
+}
+
+#[test]
+fn test_array_index_bool_error() {
+    // Index cannot be bool
+    assert_type_error("let arr = [1, 2, 3]\narr[true]", "Array index must be an integer");
+}
+
+#[test]
+fn test_chained_array_indexing() {
+    // Indexing into nested arrays
+    assert_type_checks("let matrix: [[I32, 2], 2] = [[1, 2], [3, 4]]\nmatrix[0][1]");
+}
+
+#[test]
+fn test_array_assignment() {
+    // Assigning to array element
+    assert_type_checks("let arr = [1, 2, 3]\narr[0] = 42");
+}
+
+#[test]
+fn test_array_assignment_type_must_match() {
+    // Assignment value must match element type
+    assert_type_error("let arr: [I32, 3] = [1, 2, 3]\narr[0] = 3.14", "Type mismatch");
+}
+
+#[test]
+fn test_array_compound_assignment() {
+    // Compound assignment to array element
+    assert_type_checks("let arr = [1, 2, 3]\narr[0] += 10");
+}
+
+#[test]
+fn test_cannot_index_non_array() {
+    // Cannot index into non-array types
+    assert_type_error("let x = 42\nx[0]", "Cannot index");
+}
+
+#[test]
+fn test_nested_arrays() {
+    // Arrays of arrays
+    assert_type_checks("let matrix = [[1, 2], [3, 4]]");
+}
+
+#[test]
+fn test_nested_array_explicit_type() {
+    // Nested arrays with explicit type
+    assert_type_checks("let matrix: [[I32, 2], 2] = [[1, 2], [3, 4]]");
+}
+
+#[test]
+fn test_array_of_floats() {
+    // Array of floating-point numbers
+    assert_type_checks("let arr: [F32, 3] = [1.0, 2.0, 3.0]");
+}
+
+#[test]
+fn test_array_of_bools() {
+    // Array of booleans
+    assert_type_checks("let arr = [true, false, true]");
+}
+
+#[test]
+fn test_array_in_block() {
+    // Arrays work inside blocks
+    assert_type_checks("{\n  let arr = [1, 2, 3]\n  <- arr[1]\n}");
+}
+
+#[test]
+fn test_array_arithmetic_on_elements() {
+    // Arithmetic on array elements
+    assert_type_checks("let arr = [10, 20, 30]\nlet sum = arr[0] + arr[1]");
+}
+
+#[test]
+fn test_array_type_propagation() {
+    // Type propagates from array annotation to elements
+    assert_type_checks("let arr: [I16, 3] = [1, 2, 3]\nlet x: I16 = arr[0]");
+}
