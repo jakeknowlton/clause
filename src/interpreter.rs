@@ -319,26 +319,18 @@ impl Interpreter {
         right_value: Value,
     ) -> Result<Value, String> {
         // For indexed assignment like arr[0] = 42 or arr[i] += 10
-        // We need to handle this differently based on whether array is an identifier or a complex expression
 
-        // For now, we only support arr[index] where arr is an identifier
-        // Extract the array identifier (for simplicity, only support direct identifier for now)
-        let (array_name, index_val) = match &index_expr.array {
-            TypedExpression::Identifier(name, _) => {
-                let idx_val = self.evaluate_expression(&index_expr.index)?;
-                let idx = self.get_array_idx(&idx_val)?;
-                (name.clone(), idx)
-            }
-            _ => {
-                return Err(
-                    "Only simple array indexing (e.g., arr[i]) is supported for assignment"
-                        .to_string(),
-                );
-            }
+        let idx_val = self.evaluate_expression(&index_expr.index)?;
+        let index_val = self.get_array_idx(&idx_val)?;
+
+        // Check if the array is an identifier (so we can write back)
+        let array_name = match &index_expr.array {
+            TypedExpression::Identifier(name, _) => Some(name.clone()),
+            _ => None,
         };
 
-        // Get the current array
-        let mut array = self.environment.get(&array_name)?;
+        // Get the current array value
+        let mut array = self.evaluate_expression(&index_expr.array)?;
 
         // Compute the new value to assign
         let new_value = match operator {
@@ -389,10 +381,11 @@ impl Interpreter {
         // Set the new value in the array
         array.set_index(index_val, new_value.clone())?;
 
-        // Update the environment with the modified array
-        self.environment.assign(&array_name, array)?;
-
-        Ok(new_value)
+        // If the array came from an identifier, write it back to the environment
+        if let Some(name) = array_name {
+            self.environment.assign(&name, array.clone())?;
+        }
+        Ok(array)
     }
 
     fn apply_binary_operator(

@@ -145,8 +145,8 @@ pub enum Type {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Type::Signed(bits) => write!(f, "i{}", bits),
-            Type::Unsigned(bits) => write!(f, "u{}", bits),
+            Type::Signed(bits) => write!(f, "I{}", bits),
+            Type::Unsigned(bits) => write!(f, "U{}", bits),
             Type::F32 => write!(f, "F32"),
             Type::F64 => write!(f, "F64"),
             Type::Bool => write!(f, "Bool"),
