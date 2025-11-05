@@ -1,5 +1,5 @@
-use std::fmt;
 use super::span::Span;
+use std::fmt;
 
 // Type checker errors
 #[derive(Debug, Clone)]

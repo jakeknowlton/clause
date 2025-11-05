@@ -1,7 +1,7 @@
-use crate::runtime::Interpreter;
+use crate::analysis::type_checker::TypeChecker;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
-use crate::analysis::type_checker::TypeChecker;
+use crate::runtime::Interpreter;
 use std::io::{self, Write};
 
 pub struct Repl {

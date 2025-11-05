@@ -1,5 +1,5 @@
-use std::fmt;
 use super::span::Span;
+use std::fmt;
 
 // Parser errors
 #[derive(Debug, Clone)]

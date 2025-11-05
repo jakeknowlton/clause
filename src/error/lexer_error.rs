@@ -1,5 +1,5 @@
-use std::fmt;
 use super::span::Span;
+use std::fmt;
 
 // Lexer errors
 #[derive(Debug, Clone)]
@@ -12,9 +12,7 @@ pub struct LexerError {
 #[derive(Debug, Clone)]
 pub enum LexerErrorKind {
     UnexpectedCharacter,
-    UnterminatedString,
     InvalidNumber,
-    InvalidEscape,
 }
 
 impl fmt::Display for LexerError {

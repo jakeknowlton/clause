@@ -1,16 +1,25 @@
-use crate::frontend::ast::Type;
 use crate::error::{RuntimeError, RuntimeErrorKind};
+use crate::frontend::ast::Type;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
-    SignedInt { value: i128, bits: u8 },
-    UnsignedInt { value: u128, bits: u8 },
+    SignedInt {
+        value: i128,
+        bits: u8,
+    },
+    UnsignedInt {
+        value: u128,
+        bits: u8,
+    },
     Double(f64),
     Single(f32),
     Boolean(bool),
     Void,
-    Array { elements: Vec<Value>, element_type: Type },
+    Array {
+        elements: Vec<Value>,
+        element_type: Type,
+    },
 }
 
 impl Value {
@@ -22,7 +31,10 @@ impl Value {
             Value::Single(_) => "F32".to_string(),
             Value::Boolean(_) => "Boolean".to_string(),
             Value::Void => "Void".to_string(),
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 format!("[{}, {}]", element_type, elements.len())
             }
         }
@@ -56,10 +68,13 @@ impl Value {
         let min = Self::signed_min(bits);
         let max = Self::signed_max(bits);
         if value < min || value > max {
-            Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Value {} out of range for I{} (range: {} to {})",
-                value, bits, min, max
-            )))
+            Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Value {} out of range for I{} (range: {} to {})",
+                    value, bits, min, max
+                ),
+            ))
         } else {
             Ok(())
         }
@@ -68,35 +83,49 @@ impl Value {
     fn validate_unsigned(value: u128, bits: u8) -> Result<(), RuntimeError> {
         let max = Self::unsigned_max(bits);
         if value > max {
-            Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Value {} out of range for U{} (max: {})",
-                value, bits, max
-            )))
+            Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Value {} out of range for U{} (max: {})", value, bits, max),
+            ))
         } else {
             Ok(())
         }
     }
 
-    fn validate_signed_operation(value: i128, bits: u8, operation: &str) -> Result<(), RuntimeError> {
+    fn validate_signed_operation(
+        value: i128,
+        bits: u8,
+        operation: &str,
+    ) -> Result<(), RuntimeError> {
         let min = Self::signed_min(bits);
         let max = Self::signed_max(bits);
         if value < min || value > max {
-            Err(RuntimeError::new(RuntimeErrorKind::Overflow, format!(
-                "I{} overflow in {}: result {} out of range (valid range: {} to {})",
-                bits, operation, value, min, max
-            )))
+            Err(RuntimeError::new(
+                RuntimeErrorKind::Overflow,
+                format!(
+                    "I{} overflow in {}: result {} out of range (valid range: {} to {})",
+                    bits, operation, value, min, max
+                ),
+            ))
         } else {
             Ok(())
         }
     }
 
-    fn validate_unsigned_operation(value: u128, bits: u8, operation: &str) -> Result<(), RuntimeError> {
+    fn validate_unsigned_operation(
+        value: u128,
+        bits: u8,
+        operation: &str,
+    ) -> Result<(), RuntimeError> {
         let max = Self::unsigned_max(bits);
         if value > max {
-            Err(RuntimeError::new(RuntimeErrorKind::Overflow, format!(
-                "U{} overflow in {}: result {} out of range (max: {})",
-                bits, operation, value, max
-            )))
+            Err(RuntimeError::new(
+                RuntimeErrorKind::Overflow,
+                format!(
+                    "U{} overflow in {}: result {} out of range (max: {})",
+                    bits, operation, value, max
+                ),
+            ))
         } else {
             Ok(())
         }
@@ -117,29 +146,41 @@ impl Value {
         match self {
             Value::Array { elements, .. } => {
                 if idx >= elements.len() {
-                    Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds, format!(
-                        "Array index out of bounds: index {} but length is {}",
-                        idx,
-                        elements.len()
-                    )))
+                    Err(RuntimeError::new(
+                        RuntimeErrorKind::IndexOutOfBounds,
+                        format!(
+                            "Array index out of bounds: index {} but length is {}",
+                            idx,
+                            elements.len()
+                        ),
+                    ))
                 } else {
                     Ok(elements[idx].clone())
                 }
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds, format!("Cannot index into non-array type {}", self.type_name()))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::IndexOutOfBounds,
+                format!("Cannot index into non-array type {}", self.type_name()),
+            )),
         }
     }
 
     /// Set an element in an array at the given index
     pub fn set_index(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
         match self {
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 if idx >= elements.len() {
-                    return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds, format!(
-                        "Array index out of bounds: index {} but length is {}",
-                        idx,
-                        elements.len()
-                    )));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::IndexOutOfBounds,
+                        format!(
+                            "Array index out of bounds: index {} but length is {}",
+                            idx,
+                            elements.len()
+                        ),
+                    ));
                 }
 
                 // Verify the value matches the array's element type
@@ -150,31 +191,46 @@ impl Value {
                     Value::Double(_) => Type::F64,
                     Value::Boolean(_) => Type::Bool,
                     Value::Void => Type::Void,
-                    Value::Array { elements: elems, element_type: elem_ty } => {
-                        Type::Array(Box::new(elem_ty.clone()), elems.len())
-                    }
+                    Value::Array {
+                        elements: elems,
+                        element_type: elem_ty,
+                    } => Type::Array(Box::new(elem_ty.clone()), elems.len()),
                 };
 
                 if &value_type != element_type {
-                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                        "Type mismatch: cannot assign {} to array of {}",
-                        value_type, element_type
-                    )));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!(
+                            "Type mismatch: cannot assign {} to array of {}",
+                            value_type, element_type
+                        ),
+                    ));
                 }
 
                 elements[idx] = value;
                 Ok(())
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds, format!("Cannot index into non-array type {}", self.type_name()))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::IndexOutOfBounds,
+                format!("Cannot index into non-array type {}", self.type_name()),
+            )),
         }
     }
 
-    fn new_signed_from_operation(value: i128, bits: u8, operation: &str) -> Result<Self, RuntimeError> {
+    fn new_signed_from_operation(
+        value: i128,
+        bits: u8,
+        operation: &str,
+    ) -> Result<Self, RuntimeError> {
         Self::validate_signed_operation(value, bits, operation)?;
         Ok(Value::SignedInt { value, bits })
     }
 
-    fn new_unsigned_from_operation(value: u128, bits: u8, operation: &str) -> Result<Self, RuntimeError> {
+    fn new_unsigned_from_operation(
+        value: u128,
+        bits: u8,
+        operation: &str,
+    ) -> Result<Self, RuntimeError> {
         Self::validate_unsigned_operation(value, bits, operation)?;
         Ok(Value::UnsignedInt { value, bits })
     }
@@ -187,15 +243,21 @@ impl Value {
     ) -> Result<(), RuntimeError> {
         if left_bits != right_bits {
             return if signed {
-                Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "{} requires matching bitwidths, found I{} and I{}",
-                    operation, left_bits, right_bits
-                )))
+                Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "{} requires matching bitwidths, found I{} and I{}",
+                        operation, left_bits, right_bits
+                    ),
+                ))
             } else {
-                Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "{} requires matching bitwidths, found U{} and U{}",
-                    operation, left_bits, right_bits
-                )))
+                Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "{} requires matching bitwidths, found U{} and U{}",
+                        operation, left_bits, right_bits
+                    ),
+                ))
             };
         }
         Ok(())
@@ -214,7 +276,12 @@ impl Value {
                 },
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, true, "Integer addition".to_string())?;
-                let result = a.checked_add(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("I{} overflow in addition: operands too large", bits_a)))?;
+                let result = a.checked_add(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("I{} overflow in addition: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_signed_from_operation(result, *bits_a, "addition")
             }
             (
@@ -228,16 +295,20 @@ impl Value {
                 },
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, false, "Integer addition".to_string())?;
-                let result = a.checked_add(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("U{} overflow in addition: operands too large", bits_a)))?;
+                let result = a.checked_add(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("U{} overflow in addition: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_unsigned_from_operation(result, *bits_a, "addition")
             }
             (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a + b)),
             (Value::Single(a), Value::Single(b)) => Ok(Value::Single(a + b)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Cannot add {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Cannot add {} and {}", self.type_name(), other.type_name()),
+            )),
         }
     }
 
@@ -259,7 +330,12 @@ impl Value {
                     true,
                     "Integer subtraction".to_string(),
                 )?;
-                let result = a.checked_sub(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("I{} overflow in subtraction: operands too large", bits_a)))?;
+                let result = a.checked_sub(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("I{} overflow in subtraction: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_signed_from_operation(result, *bits_a, "subtraction")
             }
             (
@@ -278,16 +354,24 @@ impl Value {
                     false,
                     "Integer subtraction".to_string(),
                 )?;
-                let result = a.checked_sub(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("U{} overflow in subtraction: operands too large", bits_a)))?;
+                let result = a.checked_sub(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("U{} overflow in subtraction: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_unsigned_from_operation(result, *bits_a, "subtraction")
             }
             (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a - b)),
             (Value::Single(a), Value::Single(b)) => Ok(Value::Single(a - b)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Cannot subtract {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Cannot subtract {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -309,7 +393,12 @@ impl Value {
                     true,
                     "Integer multiplication".to_string(),
                 )?;
-                let result = a.checked_mul(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("I{} overflow in multiplication: operands too large", bits_a)))?;
+                let result = a.checked_mul(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("I{} overflow in multiplication: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_signed_from_operation(result, *bits_a, "multiplication")
             }
             (
@@ -328,15 +417,23 @@ impl Value {
                     false,
                     "Integer multiplication".to_string(),
                 )?;
-                let result = a.checked_mul(*b).ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!("U{} overflow in multiplication: operands too large", bits_a)))?;
+                let result = a.checked_mul(*b).ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!("U{} overflow in multiplication: operands too large", bits_a),
+                    )
+                })?;
                 Self::new_unsigned_from_operation(result, *bits_a, "multiplication")
             }
             (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a * b)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Cannot multiply {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Cannot multiply {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -354,7 +451,10 @@ impl Value {
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, true, "Integer division".to_string())?;
                 if *b == 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Division by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Division by zero".to_string(),
+                    ));
                 }
                 let result = a / b;
                 Self::new_signed_from_operation(result, *bits_a, "division")
@@ -371,28 +471,40 @@ impl Value {
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, false, "Integer division".to_string())?;
                 if *b == 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Division by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Division by zero".to_string(),
+                    ));
                 }
                 let result = a / b;
                 Self::new_unsigned_from_operation(result, *bits_a, "division")
             }
             (Value::Double(a), Value::Double(b)) => {
                 if *b == 0.0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Division by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Division by zero".to_string(),
+                    ));
                 }
                 Ok(Value::Double(a / b))
             }
             (Value::Single(a), Value::Single(b)) => {
                 if *b == 0.0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Division by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Division by zero".to_string(),
+                    ));
                 }
                 Ok(Value::Single(a / b))
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Cannot divide {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Cannot divide {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -410,7 +522,10 @@ impl Value {
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, true, "Integer remainder".to_string())?;
                 if *b == 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Modulo by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Modulo by zero".to_string(),
+                    ));
                 }
                 let result = a % b;
                 Self::new_signed_from_operation(result, *bits_a, "modulo")
@@ -427,16 +542,22 @@ impl Value {
             ) => {
                 Self::validate_bitwidths(*bits_a, *bits_b, false, "Integer remainder".to_string())?;
                 if *b == 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::DivisionByZero, "Modulo by zero".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::DivisionByZero,
+                        "Modulo by zero".to_string(),
+                    ));
                 }
                 let result = a % b;
                 Self::new_unsigned_from_operation(result, *bits_a, "modulo")
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Cannot perform modulo on {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Cannot perform modulo on {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -475,11 +596,14 @@ impl Value {
                     bits: *bits_a,
                 })
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Bitwise AND requires matching integer types, found {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Bitwise AND requires matching integer types, found {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -517,11 +641,14 @@ impl Value {
                     bits: *bits_a,
                 })
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Bitwise OR requires matching integer types, found {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Bitwise OR requires matching integer types, found {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -559,11 +686,14 @@ impl Value {
                     bits: *bits_a,
                 })
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Bitwise XOR requires matching integer types, found {} and {}",
-                self.type_name(),
-                other.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Bitwise XOR requires matching integer types, found {} and {}",
+                    self.type_name(),
+                    other.type_name()
+                ),
+            )),
         }
     }
 
@@ -577,10 +707,13 @@ impl Value {
                 value: !value,
                 bits: *bits,
             }),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Bitwise NOT requires integer type, found {}",
-                self.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Bitwise NOT requires integer type, found {}",
+                    self.type_name()
+                ),
+            )),
         }
     }
 
@@ -588,16 +721,19 @@ impl Value {
         let shift_amount = match right {
             Value::SignedInt { value: b, .. } => {
                 if *b < 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "Shift amount cannot be negative".to_string()));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        "Shift amount cannot be negative".to_string(),
+                    ));
                 }
                 *b as u128
             }
             Value::UnsignedInt { value: b, .. } => *b,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Shift amount must be integer, found {}",
-                    right.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!("Shift amount must be integer, found {}", right.type_name()),
+                ));
             }
         };
 
@@ -605,19 +741,25 @@ impl Value {
             Value::SignedInt { bits, .. } => *bits,
             Value::UnsignedInt { bits, .. } => *bits,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Left shift requires integer type, found {}",
-                    left.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Left shift requires integer type, found {}",
+                        left.type_name()
+                    ),
+                ));
             }
         };
 
         if shift_amount >= (bits as u128) {
-            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Shift amount {} too large for type {}",
-                shift_amount,
-                left.type_name()
-            )));
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!(
+                    "Shift amount {} too large for type {}",
+                    shift_amount,
+                    left.type_name()
+                ),
+            ));
         }
 
         Ok(shift_amount)
@@ -690,11 +832,14 @@ impl Value {
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Void, Value::Void) => true,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Cannot compare {} and {}",
-                    self.type_name(),
-                    other.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Cannot compare {} and {}",
+                        self.type_name(),
+                        other.type_name()
+                    ),
+                ));
             }
         }))
     }
@@ -750,11 +895,14 @@ impl Value {
             (Value::Double(a), Value::Double(b)) => a < b,
             (Value::Single(a), Value::Single(b)) => a < b,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Cannot compare {} and {}",
-                    self.type_name(),
-                    other.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Cannot compare {} and {}",
+                        self.type_name(),
+                        other.type_name()
+                    ),
+                ));
             }
         }))
     }
@@ -800,11 +948,14 @@ impl Value {
             (Value::Double(a), Value::Double(b)) => a <= b,
             (Value::Single(a), Value::Single(b)) => a <= b,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Cannot compare {} and {}",
-                    self.type_name(),
-                    other.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Cannot compare {} and {}",
+                        self.type_name(),
+                        other.type_name()
+                    ),
+                ));
             }
         }))
     }
@@ -850,11 +1001,14 @@ impl Value {
             (Value::Double(a), Value::Double(b)) => a > b,
             (Value::Single(a), Value::Single(b)) => a > b,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Cannot compare {} and {}",
-                    self.type_name(),
-                    other.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Cannot compare {} and {}",
+                        self.type_name(),
+                        other.type_name()
+                    ),
+                ));
             }
         }))
     }
@@ -900,11 +1054,14 @@ impl Value {
             (Value::Double(a), Value::Double(b)) => a >= b,
             (Value::Single(a), Value::Single(b)) => a >= b,
             _ => {
-                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                    "Cannot compare {} and {}",
-                    self.type_name(),
-                    other.type_name()
-                )));
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "Cannot compare {} and {}",
+                        self.type_name(),
+                        other.type_name()
+                    ),
+                ));
             }
         }))
     }
@@ -912,28 +1069,36 @@ impl Value {
     pub fn negate(&self) -> Result<Value, RuntimeError> {
         match self {
             Value::SignedInt { value, bits } => {
-                let result = value.checked_neg().ok_or_else(|| RuntimeError::new(RuntimeErrorKind::Overflow, format!(
-                        "I{} overflow in negation (valid range: {} to {})",
-                        bits,
-                        Self::signed_max(*bits),
-                        Self::signed_min(*bits)
-                    )))?;
+                let result = value.checked_neg().ok_or_else(|| {
+                    RuntimeError::new(
+                        RuntimeErrorKind::Overflow,
+                        format!(
+                            "I{} overflow in negation (valid range: {} to {})",
+                            bits,
+                            Self::signed_max(*bits),
+                            Self::signed_min(*bits)
+                        ),
+                    )
+                })?;
                 // "I{} overflow in {}: result {} out of range (valid range: {} to {})",
                 Self::new_signed_from_operation(result, *bits, "negation")
             }
             Value::Double(value) => Ok(Value::Double(-value)),
             Value::Single(value) => Ok(Value::Single(-value)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Cannot negate {}", self.type_name()))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Cannot negate {}", self.type_name()),
+            )),
         }
     }
 
     pub fn logical_not(&self) -> Result<Value, RuntimeError> {
         match self {
             Value::Boolean(b) => Ok(Value::Boolean(!b)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Logical NOT requires boolean, found {}",
-                self.type_name()
-            ))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Logical NOT requires boolean, found {}", self.type_name()),
+            )),
         }
     }
 }

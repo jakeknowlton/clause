@@ -1,11 +1,11 @@
+use crate::analysis::typed_ast::{
+    TypedBinaryExpr, TypedBlock, TypedExpression, TypedIfExpr, TypedIndexExpr, TypedProgram,
+    TypedStatement, TypedUnaryExpr, TypedVariableDeclaration, TypedWhileExpr,
+};
+use crate::error::{RuntimeError, RuntimeErrorKind};
 use crate::frontend::ast::{BinaryOp, Type, UnaryOp};
 use crate::runtime::environment::Environment;
-use crate::analysis::typed_ast::{
-    TypedBinaryExpr, TypedBlock, TypedExpression, TypedIfExpr, TypedIndexExpr,
-    TypedProgram, TypedStatement, TypedUnaryExpr, TypedVariableDeclaration, TypedWhileExpr,
-};
 use crate::runtime::value::Value;
-use crate::error::{RuntimeError, RuntimeErrorKind};
 
 // Control flow signal for break statements
 #[derive(Debug, Clone)]
@@ -42,7 +42,10 @@ impl Interpreter {
             TypedStatement::Break(_) => {
                 // Break should never be executed at the top level
                 // It's only valid inside loops and handled there
-                Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "break statement outside of loop".to_string()))
+                Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    "break statement outside of loop".to_string(),
+                ))
             }
             TypedStatement::Expression(expr) => self.evaluate_expression(expr),
         }
@@ -66,12 +69,18 @@ impl Interpreter {
         match *value {
             Value::SignedInt { value, .. } => {
                 if value < 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Array index cannot be negative: {}", value)));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Array index cannot be negative: {}", value),
+                    ));
                 }
                 Ok(value as usize)
             }
             Value::UnsignedInt { value, .. } => Ok(value as usize),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "Array index must be an integer".to_string())),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                "Array index must be an integer".to_string(),
+            )),
         }
     }
 
@@ -82,7 +91,10 @@ impl Interpreter {
                 match ty {
                     Type::Signed(bits) => self.parse_integer(s, true, *bits),
                     Type::Unsigned(bits) => self.parse_integer(s, false, *bits),
-                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid type for integer literal: {}", ty))),
+                    _ => Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Invalid type for integer literal: {}", ty),
+                    )),
                 }
             }
             TypedExpression::Float(s, ty) => {
@@ -90,7 +102,10 @@ impl Interpreter {
                 match ty {
                     Type::F32 => self.parse_float(s, 32),
                     Type::F64 => self.parse_float(s, 64),
-                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid type for float literal: {}", ty))),
+                    _ => Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Invalid type for float literal: {}", ty),
+                    )),
                 }
             }
             TypedExpression::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -104,7 +119,12 @@ impl Interpreter {
                 // Extract element type from array type
                 let element_type = match arr_type {
                     Type::Array(et, _) => *et.clone(),
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid array type: {}", arr_type))),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            RuntimeErrorKind::InvalidOperation,
+                            format!("Invalid array type: {}", arr_type),
+                        ));
+                    }
                 };
 
                 Ok(Value::Array {
@@ -145,7 +165,12 @@ impl Interpreter {
                 s.parse::<i128>()
             };
 
-            let value = result.map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid integer literal: {}", e)))?;
+            let value = result.map_err(|e| {
+                RuntimeError::new(
+                    RuntimeErrorKind::InvalidConversion,
+                    format!("Invalid integer literal: {}", e),
+                )
+            })?;
             Value::new_signed(value, bits)
         } else {
             let result = if s.starts_with("0x") || s.starts_with("0X") {
@@ -158,7 +183,12 @@ impl Interpreter {
                 s.parse::<u128>()
             };
 
-            let value = result.map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid integer literal: {}", e)))?;
+            let value = result.map_err(|e| {
+                RuntimeError::new(
+                    RuntimeErrorKind::InvalidConversion,
+                    format!("Invalid integer literal: {}", e),
+                )
+            })?;
             Value::new_unsigned(value, bits)
         }
     }
@@ -166,14 +196,20 @@ impl Interpreter {
     fn parse_float(&self, s: &str, bits: u8) -> Result<Value, RuntimeError> {
         let s = s.replace('_', "");
 
-        let value = s
-            .parse::<f64>()
-            .map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidConversion, format!("Invalid float literal: {}", e)))?;
+        let value = s.parse::<f64>().map_err(|e| {
+            RuntimeError::new(
+                RuntimeErrorKind::InvalidConversion,
+                format!("Invalid float literal: {}", e),
+            )
+        })?;
 
         match bits {
             32 => Ok(Value::Single(value as f32)),
             64 => Ok(Value::Double(value)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Invalid float bitwidth: {}", bits))),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Invalid float bitwidth: {}", bits),
+            )),
         }
     }
 
@@ -191,10 +227,16 @@ impl Interpreter {
                         let right = self.evaluate_expression(&binary.right)?;
                         match right {
                             Value::Boolean(_) => Ok(right),
-                            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", right.type_name()))),
+                            _ => Err(RuntimeError::new(
+                                RuntimeErrorKind::InvalidOperation,
+                                format!("Expected Boolean, found {}", right.type_name()),
+                            )),
                         }
                     }
-                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", left.type_name()))),
+                    _ => Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Expected Boolean, found {}", left.type_name()),
+                    )),
                 }
             }
             BinaryOp::LogicalOr => {
@@ -205,10 +247,16 @@ impl Interpreter {
                         let right = self.evaluate_expression(&binary.right)?;
                         match right {
                             Value::Boolean(_) => Ok(right),
-                            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", right.type_name()))),
+                            _ => Err(RuntimeError::new(
+                                RuntimeErrorKind::InvalidOperation,
+                                format!("Expected Boolean, found {}", right.type_name()),
+                            )),
                         }
                     }
-                    _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Expected Boolean, found {}", left.type_name()))),
+                    _ => Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Expected Boolean, found {}", left.type_name()),
+                    )),
                 }
             }
             _ => {
@@ -236,7 +284,10 @@ impl Interpreter {
         )
     }
 
-    fn evaluate_assignment_binary(&mut self, binary: &TypedBinaryExpr) -> Result<Value, RuntimeError> {
+    fn evaluate_assignment_binary(
+        &mut self,
+        binary: &TypedBinaryExpr,
+    ) -> Result<Value, RuntimeError> {
         // Evaluate the right-hand side
         let right_value = self.evaluate_expression(&binary.right)?;
 
@@ -247,7 +298,10 @@ impl Interpreter {
             TypedExpression::Index(index_expr) => {
                 self.evaluate_index_assignment(index_expr, &binary.operator, right_value)
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, "Invalid assignment target".to_string())),
+            _ => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                "Invalid assignment target".to_string(),
+            )),
         }
     }
 
@@ -488,7 +542,15 @@ impl Interpreter {
 
         let condition_bool = match condition_value {
             Value::Boolean(b) => b,
-            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("If condition must be boolean, found {}", condition_value.type_name()))),
+            _ => {
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "If condition must be boolean, found {}",
+                        condition_value.type_name()
+                    ),
+                ));
+            }
         };
 
         if condition_bool {
@@ -501,7 +563,15 @@ impl Interpreter {
             let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
             let else_if_bool = match else_if_cond_value {
                 Value::Boolean(b) => b,
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name()))),
+                _ => {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!(
+                            "Else-if condition must be boolean, found {}",
+                            else_if_cond_value.type_name()
+                        ),
+                    ));
+                }
             };
 
             if else_if_bool {
@@ -524,7 +594,15 @@ impl Interpreter {
 
             let condition_bool = match condition_value {
                 Value::Boolean(b) => b,
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("While condition must be boolean, found {}", condition_value.type_name()))),
+                _ => {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!(
+                            "While condition must be boolean, found {}",
+                            condition_value.type_name()
+                        ),
+                    ));
+                }
             };
 
             if !condition_bool {
@@ -577,7 +655,10 @@ impl Interpreter {
         Ok(result)
     }
 
-    fn evaluate_typed_block_in_loop(&mut self, block: &TypedBlock) -> Result<ControlFlow, RuntimeError> {
+    fn evaluate_typed_block_in_loop(
+        &mut self,
+        block: &TypedBlock,
+    ) -> Result<ControlFlow, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -621,7 +702,10 @@ impl Interpreter {
         Ok(control_flow)
     }
 
-    fn evaluate_expression_checking_breaks(&mut self, expr: &TypedExpression) -> Result<ControlFlow, RuntimeError> {
+    fn evaluate_expression_checking_breaks(
+        &mut self,
+        expr: &TypedExpression,
+    ) -> Result<ControlFlow, RuntimeError> {
         // Most expressions don't contain breaks, but if/while expressions can
         match expr {
             TypedExpression::If(if_expr) => self.evaluate_if_checking_breaks(if_expr),
@@ -643,12 +727,23 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_if_checking_breaks(&mut self, if_expr: &TypedIfExpr) -> Result<ControlFlow, RuntimeError> {
+    fn evaluate_if_checking_breaks(
+        &mut self,
+        if_expr: &TypedIfExpr,
+    ) -> Result<ControlFlow, RuntimeError> {
         // Evaluate the condition
         let condition_value = self.evaluate_expression(&if_expr.condition)?;
         let condition_bool = match condition_value {
             Value::Boolean(b) => b,
-            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("If condition must be boolean, found {}", condition_value.type_name()))),
+            _ => {
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidOperation,
+                    format!(
+                        "If condition must be boolean, found {}",
+                        condition_value.type_name()
+                    ),
+                ));
+            }
         };
 
         if condition_bool {
@@ -661,7 +756,15 @@ impl Interpreter {
             let else_if_cond_value = self.evaluate_expression(else_if_condition)?;
             let else_if_bool = match else_if_cond_value {
                 Value::Boolean(b) => b,
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Else-if condition must be boolean, found {}", else_if_cond_value.type_name()))),
+                _ => {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!(
+                            "Else-if condition must be boolean, found {}",
+                            else_if_cond_value.type_name()
+                        ),
+                    ));
+                }
             };
 
             if else_if_bool {
@@ -677,7 +780,10 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_block_checking_breaks(&mut self, block: &TypedBlock) -> Result<ControlFlow, RuntimeError> {
+    fn evaluate_block_checking_breaks(
+        &mut self,
+        block: &TypedBlock,
+    ) -> Result<ControlFlow, RuntimeError> {
         // Push a new scope for the block
         self.environment.push_scope();
 
@@ -737,13 +843,19 @@ mod tests {
         use crate::analysis::type_checker::TypeChecker;
 
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
+        let tokens = lexer.tokenize().map_err(|e| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone())
+        })?;
         let mut parser = Parser::new(tokens);
-        let program = parser.parse().map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
+        let program = parser.parse().map_err(|e| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone())
+        })?;
 
         // Type check and get typed IR
         let mut type_checker = TypeChecker::new();
-        let typed_program = type_checker.check_program(&program).map_err(|e| RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone()))?;
+        let typed_program = type_checker.check_program(&program).map_err(|e| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation, e.message.clone())
+        })?;
 
         // Interpret the typed IR
         let mut interpreter = Interpreter::new();
@@ -753,35 +865,35 @@ mod tests {
     #[test]
     fn test_integer_literals() {
         assert_eq!(
-            interpret("42").unwrap(),
+            interpret("42;").unwrap(),
             Value::SignedInt {
                 value: 42,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("0xFF").unwrap(),
+            interpret("0xFF;").unwrap(),
             Value::SignedInt {
                 value: 255,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("0b1010").unwrap(),
+            interpret("0b1010;").unwrap(),
             Value::SignedInt {
                 value: 10,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("0o17").unwrap(),
+            interpret("0o17;").unwrap(),
             Value::SignedInt {
                 value: 15,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("1_000_000").unwrap(),
+            interpret("1_000_000;").unwrap(),
             Value::SignedInt {
                 value: 1_000_000,
                 bits: 64
@@ -791,44 +903,44 @@ mod tests {
 
     #[test]
     fn test_float_literals() {
-        assert_eq!(interpret("3.14").unwrap(), Value::Double(3.14));
-        assert_eq!(interpret("1.5e2").unwrap(), Value::Double(150.0));
+        assert_eq!(interpret("3.14;").unwrap(), Value::Double(3.14));
+        assert_eq!(interpret("1.5e2;").unwrap(), Value::Double(150.0));
     }
 
     #[test]
     fn test_boolean_literals() {
-        assert_eq!(interpret("true").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("false").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("true;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("false;").unwrap(), Value::Boolean(false));
     }
 
     #[test]
     fn test_void_literal() {
-        assert_eq!(interpret("void").unwrap(), Value::Void);
+        assert_eq!(interpret("void;").unwrap(), Value::Void);
     }
 
     #[test]
     fn test_arithmetic() {
         assert_eq!(
-            interpret("5 + 3").unwrap(),
+            interpret("5 + 3;").unwrap(),
             Value::SignedInt { value: 8, bits: 64 }
         );
         assert_eq!(
-            interpret("10 - 4").unwrap(),
+            interpret("10 - 4;").unwrap(),
             Value::SignedInt { value: 6, bits: 64 }
         );
         assert_eq!(
-            interpret("2 * 6").unwrap(),
+            interpret("2 * 6;").unwrap(),
             Value::SignedInt {
                 value: 12,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("15 / 3").unwrap(),
+            interpret("15 / 3;").unwrap(),
             Value::SignedInt { value: 5, bits: 64 }
         );
         assert_eq!(
-            interpret("10 % 3").unwrap(),
+            interpret("10 % 3;").unwrap(),
             Value::SignedInt { value: 1, bits: 64 }
         );
     }
@@ -836,14 +948,14 @@ mod tests {
     #[test]
     fn test_arithmetic_precedence() {
         assert_eq!(
-            interpret("2 + 3 * 4").unwrap(),
+            interpret("2 + 3 * 4;").unwrap(),
             Value::SignedInt {
                 value: 14,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("(2 + 3) * 4").unwrap(),
+            interpret("(2 + 3) * 4;").unwrap(),
             Value::SignedInt {
                 value: 20,
                 bits: 64
@@ -853,73 +965,73 @@ mod tests {
 
     #[test]
     fn test_float_arithmetic() {
-        assert_eq!(interpret("2.5 + 1.5").unwrap(), Value::Double(4.0));
+        assert_eq!(interpret("2.5 + 1.5;").unwrap(), Value::Double(4.0));
     }
 
     #[test]
     fn test_comparison() {
-        assert_eq!(interpret("5 < 10").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("5 > 10").unwrap(), Value::Boolean(false));
-        assert_eq!(interpret("5 <= 5").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("5 >= 10").unwrap(), Value::Boolean(false));
-        assert_eq!(interpret("5 == 5").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("5 != 10").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("5 < 10;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("5 > 10;").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("5 <= 5;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("5 >= 10;").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("5 == 5;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("5 != 10;").unwrap(), Value::Boolean(true));
     }
 
     #[test]
     fn test_logical_operators() {
-        assert_eq!(interpret("true && true").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("true && false").unwrap(), Value::Boolean(false));
-        assert_eq!(interpret("false || true").unwrap(), Value::Boolean(true));
-        assert_eq!(interpret("false || false").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("true && true;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("true && false;").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("false || true;").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("false || false;").unwrap(), Value::Boolean(false));
     }
 
     #[test]
     fn test_logical_short_circuit() {
         // Short-circuit evaluation should prevent the right side from being evaluated
         // Note: Type checker still validates both operands are boolean
-        assert_eq!(interpret("false && false").unwrap(), Value::Boolean(false));
-        assert_eq!(interpret("true || false").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("false && false;").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("true || false;").unwrap(), Value::Boolean(true));
 
         // More meaningful short-circuit test: second operand depends on first
         // In a real scenario, this would prevent runtime errors
-        let source = "let x = false\nx && (5 > 10)";
+        let source = "let x = false;\nx && (5 > 10);";
         assert_eq!(interpret(source).unwrap(), Value::Boolean(false));
 
-        let source2 = "let y = true\ny || (5 < 3)";
+        let source2 = "let y = true;\ny || (5 < 3);";
         assert_eq!(interpret(source2).unwrap(), Value::Boolean(true));
     }
 
     #[test]
     fn test_bitwise_operators() {
         assert_eq!(
-            interpret("5 & 3").unwrap(),
+            interpret("5 & 3;").unwrap(),
             Value::SignedInt { value: 1, bits: 64 }
         );
         assert_eq!(
-            interpret("5 | 3").unwrap(),
+            interpret("5 | 3;").unwrap(),
             Value::SignedInt { value: 7, bits: 64 }
         );
         assert_eq!(
-            interpret("5 ^ 3").unwrap(),
+            interpret("5 ^ 3;").unwrap(),
             Value::SignedInt { value: 6, bits: 64 }
         );
         assert_eq!(
-            interpret("~5").unwrap(),
+            interpret("~5;").unwrap(),
             Value::SignedInt {
                 value: -6,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("2 << 3").unwrap(),
+            interpret("2 << 3;").unwrap(),
             Value::SignedInt {
                 value: 16,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("16 >> 2").unwrap(),
+            interpret("16 >> 2;").unwrap(),
             Value::SignedInt { value: 4, bits: 64 }
         );
     }
@@ -927,31 +1039,31 @@ mod tests {
     #[test]
     fn test_unary_operators() {
         assert_eq!(
-            interpret("-5").unwrap(),
+            interpret("-5;").unwrap(),
             Value::SignedInt {
                 value: -5,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("+5").unwrap(),
+            interpret("+5;").unwrap(),
             Value::SignedInt { value: 5, bits: 64 }
         );
-        assert_eq!(interpret("!true").unwrap(), Value::Boolean(false));
-        assert_eq!(interpret("!false").unwrap(), Value::Boolean(true));
+        assert_eq!(interpret("!true;").unwrap(), Value::Boolean(false));
+        assert_eq!(interpret("!false;").unwrap(), Value::Boolean(true));
     }
 
     #[test]
     fn test_variable_declaration() {
         assert_eq!(
-            interpret("let x = 42\nx").unwrap(),
+            interpret("let x = 42;\nx;").unwrap(),
             Value::SignedInt {
                 value: 42,
                 bits: 64
             }
         );
         assert_eq!(
-            interpret("fix y = 10\ny").unwrap(),
+            interpret("fix y = 10;\ny;").unwrap(),
             Value::SignedInt {
                 value: 10,
                 bits: 64
@@ -962,7 +1074,7 @@ mod tests {
     #[test]
     fn test_variable_assignment() {
         assert_eq!(
-            interpret("let x = 10\nx = 20\nx").unwrap(),
+            interpret("let x = 10;\nx = 20;\nx;").unwrap(),
             Value::SignedInt {
                 value: 20,
                 bits: 64
@@ -972,21 +1084,21 @@ mod tests {
 
     #[test]
     fn test_immutable_assignment_error() {
-        let result = interpret("fix x = 10\nx = 20");
+        let result = interpret("fix x = 10;\nx = 20;");
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("immutable"));
     }
 
     #[test]
     fn test_undefined_variable_error() {
-        let result = interpret("x");
+        let result = interpret("x;");
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Undefined variable"));
     }
 
     #[test]
     fn test_block_expression() {
-        let source = "{\n  let x = 5\n  let y = 10\n  <- x + y\n}";
+        let source = "{\n  let x = 5;\n  let y = 10;\n  <- x + y;\n}";
         assert_eq!(
             interpret(source).unwrap(),
             Value::SignedInt {
@@ -998,7 +1110,7 @@ mod tests {
 
     #[test]
     fn test_block_scoping() {
-        let source = "let x = 1\n{\n  let x = 2\n}\nx";
+        let source = "let x = 1;\n{\n  let x = 2;\n}\nx;";
         assert_eq!(
             interpret(source).unwrap(),
             Value::SignedInt { value: 1, bits: 64 }
@@ -1007,35 +1119,35 @@ mod tests {
 
     #[test]
     fn test_nested_blocks() {
-        let source = "let x = 1\n{\nlet y = 2\n{\nlet z = 3\n<- x + y + z\n}\n}";
+        let source = "let x = 1;\n{\nlet y = 2;\n{\nlet z = 3;\n<- x + y + z;\n}\n}";
         assert_eq!(interpret(source).unwrap(), Value::Void);
     }
 
     #[test]
     fn test_type_annotation() {
         assert_eq!(
-            interpret("let x: I32 = 42\nx").unwrap(),
+            interpret("let x: I32 = 42;\nx;").unwrap(),
             Value::SignedInt {
                 value: 42,
                 bits: 32
             }
         );
         assert_eq!(
-            interpret("let y: F32 = 3.14\ny").unwrap(),
+            interpret("let y: F32 = 3.14;\ny;").unwrap(),
             Value::Single(3.14)
         );
     }
 
     #[test]
     fn test_division_by_zero() {
-        let result = interpret("10 / 0");
+        let result = interpret("10 / 0;");
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Division by zero"));
     }
 
     #[test]
     fn test_complex_expression() {
-        let source = "let a = 5\nlet b = 10\nlet c = a * b + 20\nc";
+        let source = "let a = 5;\nlet b = 10;\nlet c = a * b + 20;\nc;";
         assert_eq!(
             interpret(source).unwrap(),
             Value::SignedInt {
@@ -1047,13 +1159,13 @@ mod tests {
 
     #[test]
     fn test_logical_and_requires_boolean() {
-        let result = interpret("5 && true");
+        let result = interpret("5 && true;");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Expected Boolean"));
         assert!(err.message.contains("I64"));
 
-        let result2 = interpret("true && 5");
+        let result2 = interpret("true && 5;");
         assert!(result2.is_err());
         let err2 = result2.unwrap_err();
         assert!(err2.message.contains("Expected Boolean"));
@@ -1062,13 +1174,13 @@ mod tests {
 
     #[test]
     fn test_logical_or_requires_boolean() {
-        let result = interpret("5 || false");
+        let result = interpret("5 || false;");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Expected Boolean"));
         assert!(err.message.contains("I64"));
 
-        let result2 = interpret("false || 5");
+        let result2 = interpret("false || 5;");
         assert!(result2.is_err());
         let err2 = result2.unwrap_err();
         assert!(err2.message.contains("Expected Boolean"));
@@ -1077,21 +1189,22 @@ mod tests {
 
     #[test]
     fn test_logical_not_requires_boolean() {
-        let result = interpret("!5");
+        let result = interpret("!5;");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Logical NOT requires boolean"));
         assert!(err.message.contains("I64"));
 
-        let result2 = interpret("!0");
+        let result2 = interpret("!0;");
         assert!(result2.is_err());
         assert!(
             result2
                 .unwrap_err()
-                .message.contains("Logical NOT requires boolean")
+                .message
+                .contains("Logical NOT requires boolean")
         );
 
-        let result3 = interpret("!3.14");
+        let result3 = interpret("!3.14;");
         assert!(result3.is_err());
         let err3 = result3.unwrap_err();
         assert!(err3.message.contains("Logical NOT requires boolean"));
@@ -1100,7 +1213,7 @@ mod tests {
 
     #[test]
     fn test_unsigned_integer_type_annotation() {
-        let source = "let x: U32 = 42\nx";
+        let source = "let x: U32 = 42;\nx;";
         assert_eq!(
             interpret(source).unwrap(),
             Value::UnsignedInt {
@@ -1109,7 +1222,7 @@ mod tests {
             }
         );
 
-        let source2 = "let y: U64 = 100\ny";
+        let source2 = "let y: U64 = 100;\ny;";
         assert_eq!(
             interpret(source2).unwrap(),
             Value::UnsignedInt {
@@ -1121,7 +1234,7 @@ mod tests {
 
     #[test]
     fn test_unsigned_integer_arithmetic() {
-        let source = "let x: U32 = 10\nlet y: U32 = 20\nx + y";
+        let source = "let x: U32 = 10;\nlet y: U32 = 20;\nx + y;";
         assert_eq!(
             interpret(source).unwrap(),
             Value::UnsignedInt {
@@ -1130,7 +1243,7 @@ mod tests {
             }
         );
 
-        let source2 = "let a: U64 = 100\nlet b: U64 = 50\na - b";
+        let source2 = "let a: U64 = 100;\nlet b: U64 = 50;\na - b;";
         assert_eq!(
             interpret(source2).unwrap(),
             Value::UnsignedInt {
@@ -1142,7 +1255,7 @@ mod tests {
 
     #[test]
     fn test_unsigned_negative_value_error() {
-        let result = interpret("let x: U32 = -5");
+        let result = interpret("let x: U32 = -5;");
         assert!(result.is_err());
         let err = result.unwrap_err();
         // Error is "Cannot negate U32" because the literal 5 is parsed as U32 due to
@@ -1152,13 +1265,13 @@ mod tests {
 
     #[test]
     fn test_unsigned_bitwise_operations() {
-        let source = "let x: U32 = 5\nlet y: U32 = 3\nx & y";
+        let source = "let x: U32 = 5;\nlet y: U32 = 3;\nx & y;";
         assert_eq!(
             interpret(source).unwrap(),
             Value::UnsignedInt { value: 1, bits: 32 }
         );
 
-        let source2 = "let a: U32 = 5\nlet b: U32 = 3\na | b";
+        let source2 = "let a: U32 = 5;\nlet b: U32 = 3;\na | b;";
         assert_eq!(
             interpret(source2).unwrap(),
             Value::UnsignedInt { value: 7, bits: 32 }
@@ -1167,16 +1280,16 @@ mod tests {
 
     #[test]
     fn test_unsigned_comparison() {
-        let source = "let x: U32 = 10\nlet y: U32 = 20\nx < y";
+        let source = "let x: U32 = 10;\nlet y: U32 = 20;\nx < y;";
         assert_eq!(interpret(source).unwrap(), Value::Boolean(true));
 
-        let source2 = "let a: U64 = 100\nlet b: U64 = 50\na > b";
+        let source2 = "let a: U64 = 100;\nlet b: U64 = 50;\na > b;";
         assert_eq!(interpret(source2).unwrap(), Value::Boolean(true));
     }
 
     #[test]
     fn test_mixed_signed_unsigned_not_allowed() {
-        let result = interpret("let x: I32 = 10\nlet y: U32 = 20\nx + y");
+        let result = interpret("let x: I32 = 10;\nlet y: U32 = 20;\nx + y;");
         assert!(result.is_err());
         let err = result.unwrap_err();
         // Type checker now catches this, so error message is from type checker
@@ -1185,14 +1298,14 @@ mod tests {
 
     #[test]
     fn test_f32_with_expression() {
-        let source = "let f: F32 = 1.0 + 2.0\nf";
+        let source = "let f: F32 = 1.0 + 2.0;\nf;";
         assert_eq!(interpret(source).unwrap(), Value::Single(3.0));
     }
 
     #[test]
     fn test_yield_acts_as_break() {
         // First yield should be returned, subsequent statements should not execute
-        let source = "{\n  let x = 10\n  <- x\n  let y = 20\n  <- y\n}";
+        let source = "{\n  let x = 10;\n  <- x;\n  let y = 20;\n  <- y;\n}";
         assert_eq!(
             interpret(source).unwrap(),
             Value::SignedInt {
@@ -1205,7 +1318,7 @@ mod tests {
     #[test]
     fn test_yield_prevents_side_effects() {
         // Variable declaration after yield should not execute
-        let source = "let a = 5\n{\n  <- a\n  let b = 10\n}\nb";
+        let source = "let a = 5;\n{\n  <- a;\n  let b = 10;\n}\nb;";
         let result = interpret(source);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Undefined variable"));
@@ -1214,7 +1327,7 @@ mod tests {
     #[test]
     fn test_block_with_no_yield_evaluates_to_void() {
         // Variable declaration after yield should not execute
-        let source = "{ let x = 10\nlet y = 30 }";
+        let source = "{ let x = 10;\nlet y = 30; }";
         let result = interpret(source);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::Void);
@@ -1223,7 +1336,7 @@ mod tests {
     #[test]
     fn test_block_with_only_expressions_evaluates_to_void() {
         // Variable declaration after yield should not execute
-        let source = "{ 3 + 2 * 10\n15 << 2 }";
+        let source = "{ 3 + 2 * 10;\n15 << 2; }";
         let result = interpret(source);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::Void);
@@ -1232,15 +1345,20 @@ mod tests {
     #[test]
     fn test_inconsistent_yield_types_caught() {
         // Type checker should catch inconsistent yield types in a block
-        let source = "{\n  let x = true\n  <- 42\n  <- x\n}";
+        let source = "{\n  let x = true;\n  <- 42;\n  <- x;\n}";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("Integer type expected"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Integer type expected")
+        );
     }
 
     #[test]
     fn test_add_after_assignment() {
-        let source = "let x: I32 = 10\nx + 3";
+        let source = "let x: I32 = 10;\nx + 3;";
         let result = interpret(source);
         assert!(result.is_ok());
         assert_eq!(
@@ -1258,10 +1376,13 @@ mod tests {
 
     #[test]
     fn test_array_literal_evaluation() {
-        let source = "[1, 2, 3]";
+        let source = "[1, 2, 3];";
         let result = interpret(source).unwrap();
         match result {
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 assert_eq!(elements.len(), 3);
                 assert_eq!(element_type, Type::Signed(64));
                 match &elements[0] {
@@ -1278,10 +1399,13 @@ mod tests {
 
     #[test]
     fn test_array_with_explicit_type() {
-        let source = "let arr: [I32, 3] = [10, 20, 30]\narr";
+        let source = "let arr: [I32, 3] = [10, 20, 30];\narr;";
         let result = interpret(source).unwrap();
         match result {
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 assert_eq!(elements.len(), 3);
                 assert_eq!(element_type, Type::Signed(32));
                 match &elements[1] {
@@ -1298,10 +1422,13 @@ mod tests {
 
     #[test]
     fn test_empty_array() {
-        let source = "let arr: [I32, 0] = []\narr";
+        let source = "let arr: [I32, 0] = [];\narr;";
         let result = interpret(source).unwrap();
         match result {
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 assert_eq!(elements.len(), 0);
                 assert_eq!(element_type, Type::Signed(32));
             }
@@ -1311,7 +1438,7 @@ mod tests {
 
     #[test]
     fn test_array_indexing_evaluation() {
-        let source = "let arr = [10, 20, 30]\narr[1]";
+        let source = "let arr = [10, 20, 30];\narr[1];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1324,17 +1451,14 @@ mod tests {
 
     #[test]
     fn test_array_indexing_first_element() {
-        let source = "let arr = [5, 10, 15]\narr[0]";
+        let source = "let arr = [5, 10, 15];\narr[0];";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt { value: 5, bits: 64 }
-        );
+        assert_eq!(result, Value::SignedInt { value: 5, bits: 64 });
     }
 
     #[test]
     fn test_array_indexing_last_element() {
-        let source = "let arr = [5, 10, 15, 20]\narr[3]";
+        let source = "let arr = [5, 10, 15, 20];\narr[3];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1347,7 +1471,7 @@ mod tests {
 
     #[test]
     fn test_array_indexing_with_variable() {
-        let source = "let arr = [100, 200, 300]\nlet i = 2\narr[i]";
+        let source = "let arr = [100, 200, 300];\nlet i = 2;\narr[i];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1360,7 +1484,7 @@ mod tests {
 
     #[test]
     fn test_array_indexing_with_expression() {
-        let source = "let arr = [10, 20, 30, 40, 50]\nlet i = 1\narr[i + 2]";
+        let source = "let arr = [10, 20, 30, 40, 50];\nlet i = 1;\narr[i + 2];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1373,7 +1497,7 @@ mod tests {
 
     #[test]
     fn test_array_index_out_of_bounds() {
-        let source = "let arr = [1, 2, 3]\narr[5]";
+        let source = "let arr = [1, 2, 3];\narr[5];";
         let result = interpret(source);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("out of bounds"));
@@ -1381,7 +1505,7 @@ mod tests {
 
     #[test]
     fn test_array_index_negative() {
-        let source = "let arr = [1, 2, 3]\nlet i: I32 = -1\narr[i]";
+        let source = "let arr = [1, 2, 3];\nlet i: I32 = -1;\narr[i];";
         let result = interpret(source);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("cannot be negative"));
@@ -1389,10 +1513,13 @@ mod tests {
 
     #[test]
     fn test_nested_array_evaluation() {
-        let source = "let matrix = [[1, 2], [3, 4]]\nmatrix";
+        let source = "let matrix = [[1, 2], [3, 4]];\nmatrix;";
         let result = interpret(source).unwrap();
         match result {
-            Value::Array { elements, element_type } => {
+            Value::Array {
+                elements,
+                element_type,
+            } => {
                 assert_eq!(elements.len(), 2);
                 match element_type {
                     Type::Array(inner_type, size) => {
@@ -1408,17 +1535,14 @@ mod tests {
 
     #[test]
     fn test_chained_array_indexing() {
-        let source = "let matrix = [[1, 2], [3, 4]]\nmatrix[0][1]";
+        let source = "let matrix = [[1, 2], [3, 4]];\nmatrix[0][1];";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt { value: 2, bits: 64 }
-        );
+        assert_eq!(result, Value::SignedInt { value: 2, bits: 64 });
     }
 
     #[test]
     fn test_chained_array_indexing_second_row() {
-        let source = "let matrix = [[10, 20], [30, 40]]\nmatrix[1][0]";
+        let source = "let matrix = [[10, 20], [30, 40]];\nmatrix[1][0];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1431,7 +1555,7 @@ mod tests {
 
     #[test]
     fn test_array_element_assignment() {
-        let source = "let arr = [1, 2, 3]\narr[1] = 42\narr[1]";
+        let source = "let arr = [1, 2, 3];\narr[1] = 42;\narr[1];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1444,7 +1568,7 @@ mod tests {
 
     #[test]
     fn test_array_element_assignment_first() {
-        let source = "let arr = [10, 20, 30]\narr[0] = 99\narr[0]";
+        let source = "let arr = [10, 20, 30];\narr[0] = 99;\narr[0];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1457,7 +1581,7 @@ mod tests {
 
     #[test]
     fn test_array_compound_assignment_add() {
-        let source = "let arr = [5, 10, 15]\narr[1] += 20\narr[1]";
+        let source = "let arr = [5, 10, 15];\narr[1] += 20;\narr[1];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1470,7 +1594,7 @@ mod tests {
 
     #[test]
     fn test_array_compound_assignment_subtract() {
-        let source = "let arr = [100, 50, 25]\narr[0] -= 30\narr[0]";
+        let source = "let arr = [100, 50, 25];\narr[0] -= 30;\narr[0];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1483,7 +1607,7 @@ mod tests {
 
     #[test]
     fn test_array_compound_assignment_multiply() {
-        let source = "let arr = [2, 3, 4]\narr[1] *= 10\narr[1]";
+        let source = "let arr = [2, 3, 4];\narr[1] *= 10;\narr[1];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1496,7 +1620,7 @@ mod tests {
 
     #[test]
     fn test_array_arithmetic_on_elements() {
-        let source = "let arr = [10, 20, 30]\nlet sum = arr[0] + arr[1] + arr[2]\nsum";
+        let source = "let arr = [10, 20, 30];\nlet sum = arr[0] + arr[1] + arr[2];\nsum;";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1509,31 +1633,28 @@ mod tests {
 
     #[test]
     fn test_array_of_floats() {
-        let source = "let arr: [F32, 3] = [1.5, 2.5, 3.5]\narr[1]";
+        let source = "let arr: [F32, 3] = [1.5, 2.5, 3.5];\narr[1];";
         let result = interpret(source).unwrap();
         assert_eq!(result, Value::Single(2.5));
     }
 
     #[test]
     fn test_array_of_bools() {
-        let source = "let arr = [true, false, true]\narr[2]";
+        let source = "let arr = [true, false, true];\narr[2];";
         let result = interpret(source).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_array_in_block() {
-        let source = "{\n  let arr = [1, 2, 3]\n  <- arr[1]\n}";
+        let source = "{\n  let arr = [1, 2, 3];\n  <- arr[1];\n}";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt { value: 2, bits: 64 }
-        );
+        assert_eq!(result, Value::SignedInt { value: 2, bits: 64 });
     }
 
     #[test]
     fn test_multiple_array_operations() {
-        let source = "let arr = [5, 10, 15]\narr[0] += 5\narr[1] *= 2\narr[2] -= 5\narr[0] + arr[1] + arr[2]";
+        let source = "let arr = [5, 10, 15];\narr[0] += 5;\narr[1] *= 2;\narr[2] -= 5;\narr[0] + arr[1] + arr[2];";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1546,7 +1667,7 @@ mod tests {
 
     #[test]
     fn test_array_assignment_out_of_bounds() {
-        let source = "let arr = [1, 2, 3]\narr[5] = 42";
+        let source = "let arr = [1, 2, 3];\narr[5] = 42;";
         let result = interpret(source);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("out of bounds"));
@@ -1554,20 +1675,14 @@ mod tests {
 
     #[test]
     fn test_index_array_literal() {
-        let source = "let val = [1, 2, 3][0]";
+        let source = "let val = [1, 2, 3][0];";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 1,
-                bits: 64
-            }
-        )
+        assert_eq!(result, Value::SignedInt { value: 1, bits: 64 })
     }
 
     #[test]
     fn test_index_assignment_array_literal() {
-        let source = "[1, 2, 3][0] -= 30";
+        let source = "[1, 2, 3][0] -= 30;";
         let result = interpret(source).unwrap();
         assert_eq!(result.type_name(), "[I64, 3]")
     }
@@ -1578,7 +1693,7 @@ mod tests {
 
     #[test]
     fn test_if_then_true() {
-        let source = "if true { <- 42 } else { <- 0 }";
+        let source = "if true { <- 42; } else { <- 0; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1591,59 +1706,35 @@ mod tests {
 
     #[test]
     fn test_if_then_false() {
-        let source = "if false { <- 42 } else { <- 0 }";
+        let source = "if false { <- 42; } else { <- 0; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 0,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 0, bits: 64 });
     }
 
     #[test]
     fn test_if_else_if_first_branch() {
-        let source = "if true { <- 1 } else if true { <- 2 } else { <- 3 }";
+        let source = "if true { <- 1; } else if true { <- 2; } else { <- 3; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 1,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 1, bits: 64 });
     }
 
     #[test]
     fn test_if_else_if_second_branch() {
-        let source = "if false { <- 1 } else if true { <- 2 } else { <- 3 }";
+        let source = "if false { <- 1; } else if true { <- 2; } else { <- 3; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 2,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 2, bits: 64 });
     }
 
     #[test]
     fn test_if_else_if_else_branch() {
-        let source = "if false { <- 1 } else if false { <- 2 } else { <- 3 }";
+        let source = "if false { <- 1; } else if false { <- 2; } else { <- 3; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 3,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
     }
 
     #[test]
     fn test_if_with_expression_condition() {
-        let source = "let x = 5\nif x > 3 { <- 100 } else { <- 200 }";
+        let source = "let x = 5;\nif x > 3 { <- 100; } else { <- 200; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1663,20 +1754,14 @@ mod tests {
 
     #[test]
     fn test_if_nested() {
-        let source = "if true { <- if false { <- 1 } else { <- 2 } } else { <- 3 }";
+        let source = "if true { <- if false { <- 1; } else { <- 2; }; } else { <- 3; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 2,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 2, bits: 64 });
     }
 
     #[test]
     fn test_if_with_variable_assignment() {
-        let source = "let x = if true { <- 42 } else { <- 0 }\n<- x";
+        let source = "let x = if true { <- 42; } else { <- 0; };\n<- x;";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1693,20 +1778,14 @@ mod tests {
 
     #[test]
     fn test_while_false_no_execution() {
-        let source = "while false { <- 42 } else { <- 0 }";
+        let source = "while false { <- 42; } else { <- 0; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 0,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 0, bits: 64 });
     }
 
     #[test]
     fn test_while_true_with_yield_breaks() {
-        let source = "while true { <- 42 } else { <- 0 }";
+        let source = "while true { <- 42; } else { <- 0; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1719,20 +1798,15 @@ mod tests {
 
     #[test]
     fn test_while_loop_counter() {
-        let source = "{ let i = 0\nwhile i < 5 { i = i + 1 }\n<- i }";
+        let source = "{ let i = 0;\nwhile i < 5 { i = i + 1; }\n<- i; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 5,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 5, bits: 64 });
     }
 
     #[test]
     fn test_while_loop_sum() {
-        let source = "{ let sum = 0\nlet i = 1\nwhile i <= 5 { sum = sum + i\ni = i + 1 }\n<- sum }";
+        let source =
+            "{ let sum = 0;\nlet i = 1;\nwhile i <= 5 { sum = sum + i;\ni = i + 1; }\n<- sum; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1745,54 +1819,30 @@ mod tests {
 
     #[test]
     fn test_while_with_conditional_yield() {
-        let source = "{ let i = 0\nlet result = 0\nwhile i < 10 { i = i + 1\nif i == 3 { result = i\n<- void } }\n<- result }";
+        let source = "{ let i = 0;\nlet result = 0;\nwhile i < 10 { i = i + 1;\nif i == 3 { result = i;\n<- void; } }\n<- result; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 3,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
     }
 
     #[test]
     fn test_while_nested_block_yield_doesnt_break() {
-        let source = "{ let i = 0\nwhile i < 3 { let x = { <- 10 }\ni = i + 1 }\n<- i }";
+        let source = "{ let i = 0;\nwhile i < 3 { let x = { <- 10; };\ni = i + 1; }\n<- i; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 3,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
     }
 
     #[test]
     fn test_while_array_manipulation() {
-        let source = "{ let arr = [0, 0, 0]\nlet i = 0\nwhile i < 3 { arr[i] = i * 2\ni = i + 1 }\n<- arr[2] }";
+        let source = "{ let arr = [0, 0, 0];\nlet i = 0;\nwhile i < 3 { arr[i] = i * 2;\ni = i + 1; }\n<- arr[2]; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 4,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 4, bits: 64 });
     }
 
     #[test]
     fn test_while_with_void_yield() {
-        let source = "{ let i = 0\nwhile i < 5 { i = i + 1\nif i == 10 { <- void } }\n<- i }";
+        let source = "{ let i = 0;\nwhile i < 5 { i = i + 1;\nif i == 10 { <- void; } }\n<- i; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 5,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 5, bits: 64 });
     }
 
     // ============================================================================
@@ -1801,7 +1851,7 @@ mod tests {
 
     #[test]
     fn test_break_exits_loop() {
-        let source = "while true { break 42 } else { <- 0 }";
+        let source = "while true { break 42; } else { <- 0; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1814,7 +1864,7 @@ mod tests {
 
     #[test]
     fn test_break_from_nested_block() {
-        let source = "while true { { { break 99 } } } else { <- 0 }";
+        let source = "while true { { { break 99; } } } else { <- 0; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1827,7 +1877,7 @@ mod tests {
 
     #[test]
     fn test_break_from_nested_if() {
-        let source = "let i = 0\nwhile true { i = i + 1\nif i > 3 { break i * 10 } else { } } else { <- 0 }";
+        let source = "let i = 0;\nwhile true { i = i + 1;\nif i > 3 { break i * 10; } else { } } else { <- 0; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1840,20 +1890,14 @@ mod tests {
 
     #[test]
     fn test_yield_in_nested_block_doesnt_break_loop() {
-        let source = "{ let i = 0\nwhile i < 3 { i = i + 1\nlet x = { <- 100 } }\n<- i }";
+        let source = "{ let i = 0;\nwhile i < 3 { i = i + 1;\nlet x = { <- 100; }; }\n<- i; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 3,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
     }
 
     #[test]
     fn test_while_else_executes_on_false_condition() {
-        let source = "{ let i = 0\n<- while i < 3 { i = i + 1 } else { <- 42 } }";
+        let source = "{ let i = 0;\n<- while i < 3 { i = i + 1; } else { <- 42; }; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1866,7 +1910,7 @@ mod tests {
 
     #[test]
     fn test_while_else_skipped_on_break() {
-        let source = "while true { break 100 } else { <- 200 }";
+        let source = "while true { break 100; } else { <- 200; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1879,7 +1923,7 @@ mod tests {
 
     #[test]
     fn test_while_else_skipped_on_yield() {
-        let source = "while true { <- 100 } else { <- 200 }";
+        let source = "while true { <- 100; } else { <- 200; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,
@@ -1892,77 +1936,67 @@ mod tests {
 
     #[test]
     fn test_while_else_with_initial_false_condition() {
-        let source = "while false { <- 1 } else { <- 2 }";
+        let source = "while false { <- 1; } else { <- 2; }";
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 2,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 2, bits: 64 });
     }
 
     #[test]
     fn test_break_and_yield_coexist() {
         let source = r#"
         {
-            let i = 0
+            let i = 0;
             <- while true {
-                i = i + 1
+                i = i + 1;
                 if i == 3 {
-                    <- void
+                    <- void;
                 } else { }
                 if i == 7 {
-                    break i
+                    break i;
                 } else { }
             } else {
-                <- 0
-            }
+                <- 0;
+            };
         }"#;
         let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 7,
-                bits: 64
-            }
-        );
+        assert_eq!(result, Value::SignedInt { value: 7, bits: 64 });
     }
 
     #[test]
     fn test_break_outside_loop_error() {
-        let source = "break 42";
+        let source = "break 42;";
         let result = interpret(source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("can only be used inside loops"));
-    }
-
-    #[test]
-    fn test_break_in_block_outside_loop_error() {
-        let source = "{ break 10 }";
-        let result = interpret(source);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("can only be used inside loops") || err.message.contains("only be used inside loops"));
-    }
-
-    #[test]
-    fn test_nested_while_with_break_inner() {
-        let source = "{ let outer = 0\nwhile outer < 3 { outer = outer + 1\nlet inner = 0\nlet val = while inner < 5 { inner = inner + 1\nif inner == 2 { break inner } else { } } else { <- 0 } }\n<- outer }";
-        let result = interpret(source).unwrap();
-        assert_eq!(
-            result,
-            Value::SignedInt {
-                value: 3,
-                bits: 64
-            }
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("can only be used inside loops")
         );
     }
 
     #[test]
+    fn test_break_in_block_outside_loop_error() {
+        let source = "{ break 10; }";
+        let result = interpret(source);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("can only be used inside loops")
+                || err.message.contains("only be used inside loops")
+        );
+    }
+
+    #[test]
+    fn test_nested_while_with_break_inner() {
+        let source = "{ let outer = 0;\nwhile outer < 3 { outer = outer + 1;\nlet inner = 0;\nlet val = while inner < 5 { inner = inner + 1;\nif inner == 2 { break inner; } else { } } else { <- 0; }; }\n<- outer; }";
+        let result = interpret(source).unwrap();
+        assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
+    }
+
+    #[test]
     fn test_while_else_with_multiple_iterations() {
-        let source = "let sum = 0\nlet i = 1\nwhile i <= 5 { sum = sum + i\ni = i + 1 } else { <- sum }";
+        let source = "let sum = 0;\nlet i = 1;\nwhile i <= 5 { sum = sum + i;\ni = i + 1; } else { <- sum; }";
         let result = interpret(source).unwrap();
         assert_eq!(
             result,

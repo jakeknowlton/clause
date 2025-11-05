@@ -1,5 +1,5 @@
-use crate::frontend::token::{Token, TokenKind};
 use crate::error::{LexerError, LexerErrorKind, Span};
+use crate::frontend::token::{Token, TokenKind};
 
 pub struct Lexer {
     input: Vec<char>,
@@ -56,6 +56,7 @@ impl Lexer {
             ']' => Ok(self.make_token(TokenKind::RBracket, 1, start_line, start_column)),
             ':' => Ok(self.make_token(TokenKind::Colon, 1, start_line, start_column)),
             ',' => Ok(self.make_token(TokenKind::Comma, 1, start_line, start_column)),
+            ';' => Ok(self.make_token(TokenKind::Semicolon, 1, start_line, start_column)),
 
             // Multi-character operators (must check these before single-char ones)
             '<' => self.lex_less_than(start_line, start_column),

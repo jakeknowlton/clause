@@ -1,5 +1,5 @@
-use crate::runtime::value::Value;
 use crate::error::{RuntimeError, RuntimeErrorKind};
+use crate::runtime::value::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -30,14 +30,19 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: String, value: Value, mutable: bool) -> Result<(), RuntimeError> {
+    pub fn define(
+        &mut self,
+        name: String,
+        value: Value,
+        mutable: bool,
+    ) -> Result<(), RuntimeError> {
         let current_scope = self.scopes.last_mut().unwrap();
 
         if current_scope.contains_key(&name) {
-            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!(
-                "Variable '{}' is already defined in this scope",
-                name
-            )));
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidOperation,
+                format!("Variable '{}' is already defined in this scope", name),
+            ));
         }
 
         current_scope.insert(name, Binding { value, mutable });
@@ -50,20 +55,29 @@ impl Environment {
                 return Ok(binding.value.clone());
             }
         }
-        Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Undefined variable '{}'", name)))
+        Err(RuntimeError::new(
+            RuntimeErrorKind::InvalidOperation,
+            format!("Undefined variable '{}'", name),
+        ))
     }
 
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(binding) = scope.get_mut(name) {
                 if !binding.mutable {
-                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Cannot assign to immutable variable '{}'", name)));
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidOperation,
+                        format!("Cannot assign to immutable variable '{}'", name),
+                    ));
                 }
                 binding.value = value;
                 return Ok(());
             }
         }
-        Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation, format!("Undefined variable '{}'", name)))
+        Err(RuntimeError::new(
+            RuntimeErrorKind::InvalidOperation,
+            format!("Undefined variable '{}'", name),
+        ))
     }
 }
 

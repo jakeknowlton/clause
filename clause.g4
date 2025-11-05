@@ -13,19 +13,41 @@ program
 statement
     : variableDeclaration
     | yieldStatement
+    | breakStatement
     | expressionStatement
+    | blockStatement
+    | ifStatement
+    | whileStatement
     ;
 
 variableDeclaration
-    : ('let' | 'fix') IDENTIFIER (':' type)? '=' expression
+    : ('let' | 'fix') IDENTIFIER (':' type)? '=' expression ';'
     ;
 
 expressionStatement
-    : expression
+    : expression ';'
     ;
 
 yieldStatement
-    : YIELD expression
+    : YIELD expression ';'
+    ;
+
+breakStatement
+    : BREAK expression ';'
+    ;
+
+// Block-based statements (no semicolon required)
+// These use the same productions as the expression forms
+blockStatement
+    : blockExpression
+    ;
+
+ifStatement
+    : ifExpression
+    ;
+
+whileStatement
+    : whileExpression
     ;
 
 // Expressions with precedence (lowest to highest precedence at bottom)
@@ -94,10 +116,26 @@ postfix
 primary
     : literal
     | IDENTIFIER
-    | block
+    | blockExpression
+    | ifExpression
+    | whileExpression
     | '(' expression ')'
     ;
 
+// Block/if/while as expressions (can be used in expression context)
+blockExpression
+    : block
+    ;
+
+ifExpression
+    : IF expression block (ELSE IF expression block)* (ELSE block)?
+    ;
+
+whileExpression
+    : WHILE expression block (ELSE block)?
+    ;
+
+// Block definition (shared by statements and expressions)
 block
     : '{' blockBody '}'
     ;
@@ -134,6 +172,10 @@ type
 // Keywords
 LET         : 'let';
 FIX         : 'fix';
+IF          : 'if';
+ELSE        : 'else';
+WHILE       : 'while';
+BREAK       : 'break';
 VOID_LITERAL: 'void';
 
 // Built-in types (already covered in parser rule 'type')
@@ -235,6 +277,7 @@ LBRACKET    : '[';
 RBRACKET    : ']';
 COLON       : ':';
 COMMA       : ',';
+SEMICOLON   : ';';
 
 // Comments
 LINE_COMMENT

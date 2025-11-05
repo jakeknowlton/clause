@@ -7,10 +7,16 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    // Statements that require semicolons
     VariableDeclaration(VariableDeclaration),
     Yield(YieldStatement),
     Break(BreakStatement),
     Expression(Expression),
+
+    // Block-based statements that don't require semicolons
+    Block(Block),
+    If(IfExpr),
+    While(WhileExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,10 +202,13 @@ impl fmt::Display for Program {
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Statement::VariableDeclaration(decl) => write!(f, "{}", decl),
-            Statement::Yield(yield_stmt) => write!(f, "{}", yield_stmt),
-            Statement::Break(break_stmt) => write!(f, "{}", break_stmt),
-            Statement::Expression(expr) => write!(f, "{}", expr),
+            Statement::VariableDeclaration(decl) => write!(f, "{};", decl),
+            Statement::Yield(yield_stmt) => write!(f, "{};", yield_stmt),
+            Statement::Break(break_stmt) => write!(f, "{};", break_stmt),
+            Statement::Expression(expr) => write!(f, "{};", expr),
+            Statement::Block(block) => write!(f, "{}", block),
+            Statement::If(if_expr) => write!(f, "{}", if_expr),
+            Statement::While(while_expr) => write!(f, "{}", while_expr),
         }
     }
 }
@@ -262,7 +271,7 @@ impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{ ")?;
         for stmt in &self.statements {
-            write!(f, "{}; ", stmt)?;
+            write!(f, "{} ", stmt)?;
         }
         write!(f, "}}")
     }

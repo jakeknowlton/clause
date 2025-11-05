@@ -1,6 +1,6 @@
+use crate::error::{ParseError, ParseErrorKind, Span};
 use crate::frontend::ast::*;
 use crate::frontend::token::{Token, TokenKind};
-use crate::error::{ParseError, ParseErrorKind, Span};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -25,15 +25,52 @@ impl Parser {
     // Statements
 
     fn statement(&mut self) -> Result<Statement, ParseError> {
+        // Variable declaration (requires semicolon)
         if self.match_tokens(&[TokenKind::Let, TokenKind::Fix]) {
-            self.variable_declaration()
-        } else if self.match_tokens(&[TokenKind::Yield]) {
-            self.yield_statement()
-        } else if self.match_tokens(&[TokenKind::Break]) {
-            self.break_statement()
-        } else {
-            self.expression_statement()
+            let decl = self.variable_declaration()?;
+            self.consume(
+                TokenKind::Semicolon,
+                "Expected ';' after variable declaration",
+            )?;
+            return Ok(decl);
         }
+
+        // Yield statement (requires semicolon)
+        if self.match_tokens(&[TokenKind::Yield]) {
+            let yield_stmt = self.yield_statement()?;
+            self.consume(TokenKind::Semicolon, "Expected ';' after yield statement")?;
+            return Ok(yield_stmt);
+        }
+
+        // Break statement (requires semicolon)
+        if self.match_tokens(&[TokenKind::Break]) {
+            let break_stmt = self.break_statement()?;
+            self.consume(TokenKind::Semicolon, "Expected ';' after break statement")?;
+            return Ok(break_stmt);
+        }
+
+        // Block statement (no semicolon)
+        if self.match_tokens(&[TokenKind::LBrace]) {
+            let block = self.block()?;
+            return Ok(Statement::Block(block));
+        }
+
+        // If statement (no semicolon)
+        if self.match_tokens(&[TokenKind::If]) {
+            let if_expr = self.if_expression()?;
+            return Ok(Statement::If(if_expr));
+        }
+
+        // While statement (no semicolon)
+        if self.match_tokens(&[TokenKind::While]) {
+            let while_expr = self.while_expression()?;
+            return Ok(Statement::While(while_expr));
+        }
+
+        // Expression statement (requires semicolon)
+        let expr = self.expression()?;
+        self.consume(TokenKind::Semicolon, "Expected ';' after expression")?;
+        Ok(Statement::Expression(expr))
     }
 
     fn variable_declaration(&mut self) -> Result<Statement, ParseError> {
@@ -68,11 +105,6 @@ impl Parser {
     fn break_statement(&mut self) -> Result<Statement, ParseError> {
         let value = self.expression()?;
         Ok(Statement::Break(BreakStatement { value }))
-    }
-
-    fn expression_statement(&mut self) -> Result<Statement, ParseError> {
-        let expr = self.expression()?;
-        Ok(Statement::Expression(expr))
     }
 
     // Expressions (in precedence order)
@@ -286,10 +318,7 @@ impl Parser {
         while self.match_tokens(&[TokenKind::LBracket]) {
             let index = self.expression()?;
             self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
-            expr = Expression::Index(Box::new(IndexExpr {
-                array: expr,
-                index,
-            }));
+            expr = Expression::Index(Box::new(IndexExpr { array: expr, index }));
         }
 
         Ok(expr)
@@ -321,17 +350,20 @@ impl Parser {
 
         // If expression
         if self.match_tokens(&[TokenKind::If]) {
-            return self.if_expression();
+            let if_expr = self.if_expression()?;
+            return Ok(Expression::If(Box::new(if_expr)));
         }
 
         // While loop
         if self.match_tokens(&[TokenKind::While]) {
-            return self.while_expression();
+            let while_expr = self.while_expression()?;
+            return Ok(Expression::While(Box::new(while_expr)));
         }
 
-        // Block
+        // Block expression
         if self.match_tokens(&[TokenKind::LBrace]) {
-            return self.block();
+            let block = self.block()?;
+            return Ok(Expression::Block(block));
         }
 
         // Array literal
@@ -371,7 +403,7 @@ impl Parser {
         Ok(Expression::ArrayLiteral(elements))
     }
 
-    fn block(&mut self) -> Result<Expression, ParseError> {
+    fn block(&mut self) -> Result<Block, ParseError> {
         let mut statements = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -380,19 +412,16 @@ impl Parser {
 
         self.consume(TokenKind::RBrace, "Expected '}' after block")?;
 
-        Ok(Expression::Block(Block { statements }))
+        Ok(Block { statements })
     }
 
-    fn if_expression(&mut self) -> Result<Expression, ParseError> {
+    fn if_expression(&mut self) -> Result<IfExpr, ParseError> {
         // Parse condition (no parentheses required)
         let condition = self.expression()?;
 
         // Parse then block (required)
         self.consume(TokenKind::LBrace, "Expected '{' after if condition")?;
-        let then_block = match self.block()? {
-            Expression::Block(block) => block,
-            _ => unreachable!(),
-        };
+        let then_block = self.block()?;
 
         // Parse else-if and else branches
         let mut else_ifs = Vec::new();
@@ -403,53 +432,45 @@ impl Parser {
                 // else if branch
                 let else_if_condition = self.expression()?;
                 self.consume(TokenKind::LBrace, "Expected '{' after else if condition")?;
-                let else_if_block = match self.block()? {
-                    Expression::Block(block) => block,
-                    _ => unreachable!(),
-                };
+                let else_if_block = self.block()?;
                 else_ifs.push((else_if_condition, else_if_block));
             } else {
                 // else branch (final)
                 self.consume(TokenKind::LBrace, "Expected '{' after else")?;
-                else_block = Some(match self.block()? {
-                    Expression::Block(block) => block,
-                    _ => unreachable!(),
-                });
+                else_block = Some(self.block()?);
                 break; // else must be last
             }
         }
 
-        Ok(Expression::If(Box::new(IfExpr {
+        Ok(IfExpr {
             condition,
             then_block,
             else_ifs,
             else_block,
-        })))
+        })
     }
 
-    fn while_expression(&mut self) -> Result<Expression, ParseError> {
+    fn while_expression(&mut self) -> Result<WhileExpr, ParseError> {
         // Parse condition (no parentheses required)
         let condition = self.expression()?;
 
         // Parse body block (required)
         self.consume(TokenKind::LBrace, "Expected '{' after while condition")?;
-        let body = match self.block()? {
-            Expression::Block(block) => block,
-            _ => unreachable!(),
-        };
+        let body = self.block()?;
 
         // Parse optional else block
         let else_block = if self.match_tokens(&[TokenKind::Else]) {
             self.consume(TokenKind::LBrace, "Expected '{' after else")?;
-            Some(match self.block()? {
-                Expression::Block(block) => block,
-                _ => unreachable!(),
-            })
+            Some(self.block()?)
         } else {
             None
         };
 
-        Ok(Expression::While(Box::new(WhileExpr { condition, body, else_block })))
+        Ok(WhileExpr {
+            condition,
+            body,
+            else_block,
+        })
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
@@ -461,13 +482,20 @@ impl Parser {
 
             self.consume(TokenKind::Comma, "Expected ',' after array element type")?;
 
-            let size_token = self.consume(TokenKind::IntegerLiteral, "Expected integer literal for array size")?;
+            let size_token = self.consume(
+                TokenKind::IntegerLiteral,
+                "Expected integer literal for array size",
+            )?;
             let size = size_token.lexeme.parse::<usize>().map_err(|_| {
                 ParseError::new(
                     ParseErrorKind::InvalidSyntax,
                     format!("Invalid array size: {}", size_token.lexeme),
                 )
-                .with_span(Span::new(size_token.line, size_token.column, size_token.lexeme.len()))
+                .with_span(Span::new(
+                    size_token.line,
+                    size_token.column,
+                    size_token.lexeme.len(),
+                ))
             })?;
 
             self.consume(TokenKind::RBracket, "Expected ']' after array size")?;
@@ -507,14 +535,22 @@ impl Parser {
                                     bits
                                 ),
                             )
-                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
+                            .with_span(Span::new(
+                                token.line,
+                                token.column,
+                                token.lexeme.len(),
+                            )));
                         }
                         Err(_) => {
                             return Err(ParseError::new(
                                 ParseErrorKind::InvalidSyntax,
                                 format!("Invalid signed integer type: {}", type_name),
                             )
-                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
+                            .with_span(Span::new(
+                                token.line,
+                                token.column,
+                                token.lexeme.len(),
+                            )));
                         }
                     }
                 } else if type_name.starts_with('U') {
@@ -529,14 +565,22 @@ impl Parser {
                                     bits
                                 ),
                             )
-                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
+                            .with_span(Span::new(
+                                token.line,
+                                token.column,
+                                token.lexeme.len(),
+                            )));
                         }
                         Err(_) => {
                             return Err(ParseError::new(
                                 ParseErrorKind::InvalidSyntax,
                                 format!("Invalid unsigned integer type: {}", type_name),
                             )
-                            .with_span(Span::new(token.line, token.column, token.lexeme.len())));
+                            .with_span(Span::new(
+                                token.line,
+                                token.column,
+                                token.lexeme.len(),
+                            )));
                         }
                     }
                 } else {
@@ -544,7 +588,11 @@ impl Parser {
                         ParseErrorKind::InvalidSyntax,
                         format!("Unknown type: {}", type_name),
                     )
-                    .with_span(Span::new(token.line, token.column, token.lexeme.len())));
+                    .with_span(Span::new(
+                        token.line,
+                        token.column,
+                        token.lexeme.len(),
+                    )));
                 }
             }
         };
@@ -644,11 +692,10 @@ impl Parser {
             Ok(self.advance())
         } else {
             let token = self.peek();
-            Err(ParseError::new(
-                ParseErrorKind::ExpectedToken,
-                message.to_string(),
+            Err(
+                ParseError::new(ParseErrorKind::ExpectedToken, message.to_string())
+                    .with_span(Span::new(token.line, token.column, token.lexeme.len())),
             )
-            .with_span(Span::new(token.line, token.column, token.lexeme.len())))
         }
     }
 }
@@ -696,6 +743,13 @@ mod tests {
         }
     }
 
+    fn parse_first_block(source: &str) -> Block {
+        match parse_first_stmt(source) {
+            Statement::Block(block) => block,
+            _ => panic!("Expected yield statement"),
+        }
+    }
+
     fn unwrap_binary(expr: Expression) -> Box<BinaryExpr> {
         match expr {
             Expression::Binary(binary) => binary,
@@ -726,26 +780,26 @@ mod tests {
 
     #[test]
     fn test_parse_simple_expression() {
-        let program = parse("42").unwrap();
+        let program = parse("42;").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_binary_expression() {
-        let program = parse("1 + 2").unwrap();
+        let program = parse("1 + 2;").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_variable_declaration() {
-        let decl = parse_first_var_decl("let x = 42");
+        let decl = parse_first_var_decl("let x = 42;");
         assert_eq!(decl.name, "x");
         assert!(decl.mutable);
     }
 
     #[test]
     fn test_parse_integer_literal() {
-        match parse_first_expr("42") {
+        match parse_first_expr("42;") {
             Expression::Integer(val) => assert_eq!(val, "42"),
             _ => panic!("Expected integer literal"),
         }
@@ -753,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_parse_float_literal() {
-        match parse_first_expr("3.14") {
+        match parse_first_expr("3.14;") {
             Expression::Float(val) => assert_eq!(val, "3.14"),
             _ => panic!("Expected float literal"),
         }
@@ -761,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_parse_boolean_literal() {
-        match parse_first_expr("true") {
+        match parse_first_expr("true;") {
             Expression::Boolean(val) => assert!(val),
             _ => panic!("Expected boolean literal"),
         }
@@ -769,7 +823,7 @@ mod tests {
 
     #[test]
     fn test_parse_void_literal() {
-        match parse_first_expr("void") {
+        match parse_first_expr("void;") {
             Expression::Void => {}
             _ => panic!("Expected void literal"),
         }
@@ -777,7 +831,7 @@ mod tests {
 
     #[test]
     fn test_parse_identifier() {
-        match parse_first_expr("myVar") {
+        match parse_first_expr("myVar;") {
             Expression::Identifier(name) => assert_eq!(name, "myVar"),
             _ => panic!("Expected identifier"),
         }
@@ -786,7 +840,7 @@ mod tests {
     #[test]
     fn test_parse_operator_precedence() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
-        let binary = unwrap_binary(parse_first_expr("1 + 2 * 3"));
+        let binary = unwrap_binary(parse_first_expr("1 + 2 * 3;"));
         assert_eq!(binary.operator, BinaryOp::Add);
         // Right side should be multiplication
         let right_binary = unwrap_binary(binary.right);
@@ -796,7 +850,7 @@ mod tests {
     #[test]
     fn test_parse_grouping_overrides_precedence() {
         // (1 + 2) * 3 should parse as (1 + 2) * 3
-        let binary = unwrap_binary(parse_first_expr("(1 + 2) * 3"));
+        let binary = unwrap_binary(parse_first_expr("(1 + 2) * 3;"));
         assert_eq!(binary.operator, BinaryOp::Multiply);
         // Left side should be grouping with addition
         let grouped = unwrap_grouping(binary.left);
@@ -807,38 +861,38 @@ mod tests {
     #[test]
     fn test_parse_logical_operators() {
         // Should parse as (true && false) || true
-        let binary = unwrap_binary(parse_first_expr("true && false || true"));
+        let binary = unwrap_binary(parse_first_expr("true && false || true;"));
         assert_eq!(binary.operator, BinaryOp::LogicalOr);
     }
 
     #[test]
     fn test_parse_bitwise_operators() {
         // Should respect bitwise operator precedence
-        let binary = unwrap_binary(parse_first_expr("1 & 2 | 3 ^ 4"));
+        let binary = unwrap_binary(parse_first_expr("1 & 2 | 3 ^ 4;"));
         assert_eq!(binary.operator, BinaryOp::BitwiseOr);
     }
 
     #[test]
     fn test_parse_comparison_operators() {
-        let binary = unwrap_binary(parse_first_expr("1 < 2"));
+        let binary = unwrap_binary(parse_first_expr("1 < 2;"));
         assert_eq!(binary.operator, BinaryOp::LessThan);
     }
 
     #[test]
     fn test_parse_equality_operators() {
-        let binary = unwrap_binary(parse_first_expr("x == y"));
+        let binary = unwrap_binary(parse_first_expr("x == y;"));
         assert_eq!(binary.operator, BinaryOp::Equal);
     }
 
     #[test]
     fn test_parse_shift_operators() {
-        let binary = unwrap_binary(parse_first_expr("1 << 2"));
+        let binary = unwrap_binary(parse_first_expr("1 << 2;"));
         assert_eq!(binary.operator, BinaryOp::LeftShift);
     }
 
     #[test]
     fn test_parse_unary_minus() {
-        let unary = unwrap_unary(parse_first_expr("-42"));
+        let unary = unwrap_unary(parse_first_expr("-42;"));
         assert_eq!(unary.operator, UnaryOp::Minus);
         match unary.operand {
             Expression::Integer(val) => assert_eq!(val, "42"),
@@ -848,19 +902,19 @@ mod tests {
 
     #[test]
     fn test_parse_unary_not() {
-        let unary = unwrap_unary(parse_first_expr("!true"));
+        let unary = unwrap_unary(parse_first_expr("!true;"));
         assert_eq!(unary.operator, UnaryOp::LogicalNot);
     }
 
     #[test]
     fn test_parse_unary_bitwise_not() {
-        let unary = unwrap_unary(parse_first_expr("~42"));
+        let unary = unwrap_unary(parse_first_expr("~42;"));
         assert_eq!(unary.operator, UnaryOp::BitwiseNot);
     }
 
     #[test]
     fn test_parse_nested_unary() {
-        let outer = unwrap_unary(parse_first_expr("--42"));
+        let outer = unwrap_unary(parse_first_expr("--42;"));
         assert_eq!(outer.operator, UnaryOp::Minus);
         let inner = unwrap_unary(outer.operand);
         assert_eq!(inner.operator, UnaryOp::Minus);
@@ -868,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_parse_assignment() {
-        let binary = unwrap_binary(parse_first_expr("x = 42"));
+        let binary = unwrap_binary(parse_first_expr("x = 42;"));
         assert_eq!(binary.operator, BinaryOp::Assign);
         match binary.left {
             Expression::Identifier(name) => assert_eq!(name, "x"),
@@ -878,20 +932,20 @@ mod tests {
 
     #[test]
     fn test_parse_compound_assignment() {
-        let binary = unwrap_binary(parse_first_expr("x += 5"));
+        let binary = unwrap_binary(parse_first_expr("x += 5;"));
         assert_eq!(binary.operator, BinaryOp::PlusAssign);
     }
 
     #[test]
     fn test_parse_chained_assignment() {
         // x = y = 5 should parse as (x = y) = 5 with left associativity
-        let binary = unwrap_binary(parse_first_expr("x = y = 5"));
+        let binary = unwrap_binary(parse_first_expr("x = y = 5;"));
         assert_eq!(binary.operator, BinaryOp::Assign);
     }
 
     #[test]
     fn test_parse_let_declaration() {
-        let decl = parse_first_var_decl("let x = 42");
+        let decl = parse_first_var_decl("let x = 42;");
         assert_eq!(decl.name, "x");
         assert!(decl.mutable);
         assert!(decl.type_annotation.is_none());
@@ -899,14 +953,14 @@ mod tests {
 
     #[test]
     fn test_parse_fix_declaration() {
-        let decl = parse_first_var_decl("fix x = 42");
+        let decl = parse_first_var_decl("fix x = 42;");
         assert_eq!(decl.name, "x");
         assert!(!decl.mutable);
     }
 
     #[test]
     fn test_parse_declaration_with_type() {
-        let decl = parse_first_var_decl("let x: I32 = 42");
+        let decl = parse_first_var_decl("let x: I32 = 42;");
         assert_eq!(decl.name, "x");
         assert!(decl.mutable);
         assert_eq!(decl.type_annotation, Some(Type::Signed(32)));
@@ -914,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_parse_declaration_with_expression() {
-        let decl = parse_first_var_decl("let x = 1 + 2");
+        let decl = parse_first_var_decl("let x = 1 + 2;");
         assert_eq!(decl.name, "x");
         let binary = unwrap_binary(decl.initializer);
         assert_eq!(binary.operator, BinaryOp::Add);
@@ -922,19 +976,19 @@ mod tests {
 
     #[test]
     fn test_parse_empty_block() {
-        let block = unwrap_block(parse_first_expr("{}"));
+        let block = parse_first_block("{}");
         assert_eq!(block.statements.len(), 0);
     }
 
     #[test]
     fn test_parse_block_with_statements() {
-        let block = unwrap_block(parse_first_expr("{ let x = 5\nlet y = 10 }"));
+        let block = parse_first_block("{ let x = 5;\nlet y = 10; }");
         assert_eq!(block.statements.len(), 2);
     }
 
     #[test]
     fn test_parse_block_with_yield() {
-        let block = unwrap_block(parse_first_expr("{ let x = 5\n<- x * 2 }"));
+        let block = parse_first_block("{ let x = 5;\n<- x * 2; }");
         assert_eq!(block.statements.len(), 2);
         match &block.statements[1] {
             Statement::Yield(_) => {}
@@ -944,17 +998,17 @@ mod tests {
 
     #[test]
     fn test_parse_nested_blocks() {
-        let outer = unwrap_block(parse_first_expr("{ { 42 } }"));
+        let outer = parse_first_block("{ { 42; } }");
         assert_eq!(outer.statements.len(), 1);
-        match &outer.statements[0] {
-            Statement::Expression(Expression::Block(_)) => {}
+        match outer.statements[0] {
+            Statement::Block(_) => {}
             _ => panic!("Expected nested block"),
         }
     }
 
     #[test]
     fn test_parse_yield_statement() {
-        let yield_stmt = parse_first_yield("<- 42");
+        let yield_stmt = parse_first_yield("<- 42;");
         match yield_stmt.value {
             Expression::Integer(val) => assert_eq!(val, "42"),
             _ => panic!("Expected integer in yield"),
@@ -963,42 +1017,47 @@ mod tests {
 
     #[test]
     fn test_parse_yield_with_expression() {
-        let yield_stmt = parse_first_yield("<- x + y");
+        let yield_stmt = parse_first_yield("<- x + y;");
         let binary = unwrap_binary(yield_stmt.value);
         assert_eq!(binary.operator, BinaryOp::Add);
     }
 
     #[test]
     fn test_parse_multiple_statements() {
-        let program = parse("let x = 5\nlet y = 10\nx + y").unwrap();
+        let program = parse("let x = 5;\nlet y = 10;\nx + y;").unwrap();
         assert_eq!(program.statements.len(), 3);
     }
 
     #[test]
     fn test_parse_complex_expression() {
         // Just verify it parses without error
-        let program = parse("1 + 2 * 3 - 4 / 2").unwrap();
+        let program = parse("1 + 2 * 3 - 4 / 2;").unwrap();
         assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
     fn test_parse_error_missing_expression() {
-        assert!(parse("let x =").is_err());
+        assert!(parse("let x =;").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_equals() {
-        assert!(parse("let x 42").is_err());
+        assert!(parse("let x 42;").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_paren() {
-        assert!(parse("(1 + 2").is_err());
+        assert!(parse("(1 + 2;").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_block() {
-        assert!(parse("{ let x = 5").is_err());
+        assert!(parse("{ let x = 5;").is_err());
+    }
+
+    #[test]
+    fn test_parse_error_missing_semicolon() {
+        assert!(parse("let x = 5").is_err());
     }
 
     // ============================================================================
@@ -1007,7 +1066,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_literal_empty() {
-        match parse_first_expr("[]") {
+        match parse_first_expr("[];") {
             Expression::ArrayLiteral(elements) => {
                 assert_eq!(elements.len(), 0);
             }
@@ -1017,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_literal_single_element() {
-        match parse_first_expr("[42]") {
+        match parse_first_expr("[42];") {
             Expression::ArrayLiteral(elements) => {
                 assert_eq!(elements.len(), 1);
                 match &elements[0] {
@@ -1031,7 +1090,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_literal_multiple_elements() {
-        match parse_first_expr("[1, 2, 3, 4, 5]") {
+        match parse_first_expr("[1, 2, 3, 4, 5];") {
             Expression::ArrayLiteral(elements) => {
                 assert_eq!(elements.len(), 5);
                 match &elements[0] {
@@ -1049,7 +1108,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_literal_with_expressions() {
-        match parse_first_expr("[1 + 2, 3 * 4, x]") {
+        match parse_first_expr("[1 + 2, 3 * 4, x];") {
             Expression::ArrayLiteral(elements) => {
                 assert_eq!(elements.len(), 3);
                 // First element should be a binary expression
@@ -1069,7 +1128,7 @@ mod tests {
 
     #[test]
     fn test_parse_nested_array_literal() {
-        match parse_first_expr("[[1, 2], [3, 4]]") {
+        match parse_first_expr("[[1, 2], [3, 4]];") {
             Expression::ArrayLiteral(outer_elements) => {
                 assert_eq!(outer_elements.len(), 2);
                 match &outer_elements[0] {
@@ -1085,7 +1144,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_type() {
-        let decl = parse_first_var_decl("let x: [I32, 5] = [1, 2, 3, 4, 5]");
+        let decl = parse_first_var_decl("let x: [I32, 5] = [1, 2, 3, 4, 5];");
         assert_eq!(decl.name, "x");
         match decl.type_annotation {
             Some(Type::Array(elem_type, size)) => {
@@ -1098,7 +1157,7 @@ mod tests {
 
     #[test]
     fn test_parse_nested_array_type() {
-        let decl = parse_first_var_decl("let x: [[I32, 2], 3] = [[1, 2], [3, 4], [5, 6]]");
+        let decl = parse_first_var_decl("let x: [[I32, 2], 3] = [[1, 2], [3, 4], [5, 6]];");
         match decl.type_annotation {
             Some(Type::Array(elem_type, size)) => {
                 assert_eq!(size, 3);
@@ -1116,7 +1175,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_indexing() {
-        match parse_first_expr("arr[0]") {
+        match parse_first_expr("arr[0];") {
             Expression::Index(index_expr) => {
                 match index_expr.array {
                     Expression::Identifier(name) => assert_eq!(name, "arr"),
@@ -1133,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_indexing_with_variable() {
-        match parse_first_expr("arr[i]") {
+        match parse_first_expr("arr[i];") {
             Expression::Index(index_expr) => {
                 match index_expr.array {
                     Expression::Identifier(name) => assert_eq!(name, "arr"),
@@ -1150,20 +1209,18 @@ mod tests {
 
     #[test]
     fn test_parse_array_indexing_with_expression() {
-        match parse_first_expr("arr[i + 1]") {
-            Expression::Index(index_expr) => {
-                match index_expr.index {
-                    Expression::Binary(_) => {}
-                    _ => panic!("Expected binary expression for index"),
-                }
-            }
+        match parse_first_expr("arr[i + 1];") {
+            Expression::Index(index_expr) => match index_expr.index {
+                Expression::Binary(_) => {}
+                _ => panic!("Expected binary expression for index"),
+            },
             _ => panic!("Expected index expression"),
         }
     }
 
     #[test]
     fn test_parse_chained_indexing() {
-        match parse_first_expr("matrix[i][j]") {
+        match parse_first_expr("matrix[i][j];") {
             Expression::Index(outer_index) => {
                 // Outer index should have an Index as its array
                 match outer_index.array {
@@ -1190,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_indexing_assignment() {
-        let program = parse("arr[0] = 42").unwrap();
+        let program = parse("arr[0] = 42;").unwrap();
         assert_eq!(program.statements.len(), 1);
         match &program.statements[0] {
             Statement::Expression(Expression::Binary(binary)) => {
@@ -1207,21 +1264,21 @@ mod tests {
     #[test]
     fn test_parse_array_literal_trailing_comma() {
         // Trailing comma should not be allowed
-        assert!(parse("[1, 2, 3,]").is_err());
+        assert!(parse("[1, 2, 3,];").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_bracket() {
-        assert!(parse("[1, 2, 3").is_err());
+        assert!(parse("[1, 2, 3;").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_comma() {
-        assert!(parse("[1 2 3]").is_err());
+        assert!(parse("[1 2 3];").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_index() {
-        assert!(parse("arr[0").is_err());
+        assert!(parse("arr[0;").is_err());
     }
 }

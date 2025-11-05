@@ -1,5 +1,5 @@
-use std::fmt;
 use super::span::{Span, StackFrame};
+use std::fmt;
 
 // Runtime errors
 #[derive(Debug, Clone)]
@@ -59,13 +59,13 @@ impl RuntimeError {
         }
     }
 
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = span;
-        self
-    }
-
-    pub fn with_backtrace(mut self, backtrace: Vec<StackFrame>) -> Self {
-        self.backtrace = backtrace;
-        self
-    }
+    // pub fn with_span(mut self, span: Span) -> Self {
+    //     self.span = span;
+    //     self
+    // }
+    //
+    // pub fn with_backtrace(mut self, backtrace: Vec<StackFrame>) -> Self {
+    //     self.backtrace = backtrace;
+    //     self
+    // }
 }

@@ -1,8 +1,8 @@
-mod frontend;
 mod analysis;
-mod runtime;
 mod cli;
 mod error;
+mod frontend;
+mod runtime;
 
 use cli::Repl;
 
