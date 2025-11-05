@@ -1819,7 +1819,7 @@ mod tests {
 
     #[test]
     fn test_while_with_conditional_yield() {
-        let source = "{ let i = 0;\nlet result = 0;\nwhile i < 10 { i = i + 1;\nif i == 3 { result = i;\n<- void; } }\n<- result; }";
+        let source = "{ let i = 0;\nlet result = 0;\nwhile i < 10 { i = i + 1;\nif i == 3 { result = i;\n<-; } }\n<- result; }";
         let result = interpret(source).unwrap();
         assert_eq!(result, Value::SignedInt { value: 3, bits: 64 });
     }
@@ -1840,7 +1840,7 @@ mod tests {
 
     #[test]
     fn test_while_with_void_yield() {
-        let source = "{ let i = 0;\nwhile i < 5 { i = i + 1;\nif i == 10 { <- void; } }\n<- i; }";
+        let source = "{ let i = 0;\nwhile i < 5 { i = i + 1;\nif i == 10 { <-; } }\n<- i; }";
         let result = interpret(source).unwrap();
         assert_eq!(result, Value::SignedInt { value: 5, bits: 64 });
     }
@@ -1949,7 +1949,7 @@ mod tests {
             <- while true {
                 i = i + 1;
                 if i == 3 {
-                    <- void;
+                    <-;
                 } else { }
                 if i == 7 {
                     break i;

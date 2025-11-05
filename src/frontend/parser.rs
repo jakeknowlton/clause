@@ -98,12 +98,22 @@ impl Parser {
     }
 
     fn yield_statement(&mut self) -> Result<Statement, ParseError> {
-        let value = self.expression()?;
+        // Check if semicolon immediately follows (syntactic sugar for <- void;)
+        let value = if self.check(&TokenKind::Semicolon) {
+            Expression::Void
+        } else {
+            self.expression()?
+        };
         Ok(Statement::Yield(YieldStatement { value }))
     }
 
     fn break_statement(&mut self) -> Result<Statement, ParseError> {
-        let value = self.expression()?;
+        // Check if semicolon immediately follows (syntactic sugar for break void;)
+        let value = if self.check(&TokenKind::Semicolon) {
+            Expression::Void
+        } else {
+            self.expression()?
+        };
         Ok(Statement::Break(BreakStatement { value }))
     }
 
@@ -1020,6 +1030,50 @@ mod tests {
         let yield_stmt = parse_first_yield("<- x + y;");
         let binary = unwrap_binary(yield_stmt.value);
         assert_eq!(binary.operator, BinaryOp::Add);
+    }
+
+    #[test]
+    fn test_parse_yield_without_expression() {
+        let yield_stmt = parse_first_yield("<-;");
+        match yield_stmt.value {
+            Expression::Void => {}
+            _ => panic!("Expected void expression for yield without value"),
+        }
+    }
+
+    #[test]
+    fn test_parse_break_without_expression() {
+        match parse_first_stmt("break;") {
+            Statement::Break(break_stmt) => match break_stmt.value {
+                Expression::Void => {}
+                _ => panic!("Expected void expression for break without value"),
+            },
+            _ => panic!("Expected break statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_break_with_expression() {
+        match parse_first_stmt("break 42;") {
+            Statement::Break(break_stmt) => match break_stmt.value {
+                Expression::Integer(val) => assert_eq!(val, "42"),
+                _ => panic!("Expected integer expression"),
+            },
+            _ => panic!("Expected break statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_block_with_empty_yield() {
+        let block = parse_first_block("{ <-; }");
+        assert_eq!(block.statements.len(), 1);
+        match &block.statements[0] {
+            Statement::Yield(yield_stmt) => match yield_stmt.value {
+                Expression::Void => {}
+                _ => panic!("Expected void expression"),
+            },
+            _ => panic!("Expected yield statement"),
+        }
     }
 
     #[test]

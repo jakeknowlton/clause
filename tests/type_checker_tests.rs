@@ -745,7 +745,7 @@ fn test_if_else_with_void() {
 #[test]
 fn test_if_else_with_explicit_void() {
     // If/else with void is valid
-    assert_type_checks("if true { } else { <- void; }");
+    assert_type_checks("if true { } else { <-; }");
 }
 
 #[test]
@@ -812,7 +812,7 @@ fn test_while_condition_must_be_bool() {
 #[test]
 fn test_while_with_bool_condition() {
     // While with boolean condition
-    assert_type_checks("while true { <- void; }");
+    assert_type_checks("while true { <-; }");
 }
 
 #[test]
@@ -836,7 +836,7 @@ fn test_while_with_yield() {
 #[test]
 fn test_while_with_void_yield() {
     // While with yield
-    assert_type_checks("while true { <- void; }");
+    assert_type_checks("while true { <-; }");
 }
 
 #[test]
@@ -848,7 +848,7 @@ fn test_while_yield_type_inference() {
 #[test]
 fn test_while_multiple_yields_same_type() {
     // Multiple yields must have same type (both paths yield void)
-    assert_type_checks("{ let i = 0;\nwhile i < 10 { i = i + 1;\nif i == 5 { <- void; } } }");
+    assert_type_checks("{ let i = 0;\nwhile i < 10 { i = i + 1;\nif i == 5 { <-; } } }");
 }
 
 #[test]
@@ -874,7 +874,7 @@ fn test_while_with_array_mutation() {
 #[test]
 fn test_while_with_conditional() {
     // While with if inside
-    assert_type_checks("{ let i = 0;\nwhile i < 10 { i = i + 1;\nif i == 5 { <- void; } } }");
+    assert_type_checks("{ let i = 0;\nwhile i < 10 { i = i + 1;\nif i == 5 { <-; } } }");
 }
 
 #[test]
@@ -907,7 +907,7 @@ fn test_complex_control_flow() {
                 i = i + 1;
                 if i > 5 {
                     result = i;
-                    <- void;
+                    <-;
                 }
             }
             <- result;
