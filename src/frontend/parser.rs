@@ -13,13 +13,99 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
-        let mut statements = Vec::new();
+        let mut declarations = Vec::new();
 
         while !self.is_at_end() {
-            statements.push(self.statement()?);
+            declarations.push(self.declaration()?);
         }
 
-        Ok(Program { statements })
+        Ok(Program { declarations })
+    }
+
+    // Top-level declarations
+    fn declaration(&mut self) -> Result<Declaration, ParseError> {
+        // Function declaration
+        if self.match_tokens(&[TokenKind::Fun]) {
+            return self.function_declaration();
+        }
+
+        // Top-level constant (fix)
+        if self.match_tokens(&[TokenKind::Fix]) {
+            return self.top_level_constant();
+        }
+
+        let token = self.peek();
+        Err(ParseError::new(
+            ParseErrorKind::InvalidSyntax,
+            "Expected function or constant declaration at top level".to_string(),
+        )
+        .with_span(Span::new(token.line, token.column, token.lexeme.len())))
+    }
+
+    fn function_declaration(&mut self) -> Result<Declaration, ParseError> {
+        let name = self.consume(TokenKind::Identifier, "Expected function name")?;
+        let name_str = name.lexeme.clone();
+
+        self.consume(TokenKind::LParen, "Expected '(' after function name")?;
+
+        // Parse parameters
+        let mut parameters = Vec::new();
+        if !self.check(&TokenKind::RParen) {
+            loop {
+                let param_name = self.consume(TokenKind::Identifier, "Expected parameter name")?;
+                let param_name_str = param_name.lexeme.clone();
+                self.consume(TokenKind::Colon, "Expected ':' after parameter name")?;
+                let param_type = self.parse_type()?;
+
+                parameters.push(Parameter {
+                    name: param_name_str,
+                    param_type,
+                });
+
+                if !self.match_tokens(&[TokenKind::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenKind::RParen, "Expected ')' after parameters")?;
+
+        // Parse optional return type
+        let return_type = if self.match_tokens(&[TokenKind::Colon]) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        // Parse body
+        self.consume(TokenKind::LBrace, "Expected '{' before function body")?;
+        let body = self.block()?;
+
+        Ok(Declaration::Function(FunctionDeclaration {
+            name: name_str,
+            parameters,
+            return_type,
+            body,
+        }))
+    }
+
+    fn top_level_constant(&mut self) -> Result<Declaration, ParseError> {
+        let name = self.consume(TokenKind::Identifier, "Expected constant name")?;
+        let name_str = name.lexeme.clone();
+
+        self.consume(TokenKind::Colon, "Expected ':' after constant name")?;
+        let const_type = self.parse_type()?;
+
+        self.consume(TokenKind::Assign, "Expected '=' after constant type")?;
+        let initializer = self.expression()?;
+
+        self.consume(TokenKind::Semicolon, "Expected ';' after constant declaration")?;
+
+        Ok(Declaration::Constant(TopLevelConstant {
+            name: name_str,
+            const_type,
+            initializer,
+        }))
     }
 
     // Statements
@@ -33,6 +119,13 @@ impl Parser {
                 "Expected ';' after variable declaration",
             )?;
             return Ok(decl);
+        }
+
+        // Return statement (requires semicolon)
+        if self.match_tokens(&[TokenKind::Return]) {
+            let return_stmt = self.return_statement()?;
+            self.consume(TokenKind::Semicolon, "Expected ';' after return statement")?;
+            return Ok(return_stmt);
         }
 
         // Yield statement (requires semicolon)
@@ -95,6 +188,16 @@ impl Parser {
             type_annotation,
             initializer,
         }))
+    }
+
+    fn return_statement(&mut self) -> Result<Statement, ParseError> {
+        // Check if semicolon immediately follows (syntactic sugar for return void;)
+        let value = if self.check(&TokenKind::Semicolon) {
+            Expression::Void
+        } else {
+            self.expression()?
+        };
+        Ok(Statement::Return(ReturnStatement { value }))
     }
 
     fn yield_statement(&mut self) -> Result<Statement, ParseError> {
@@ -324,11 +427,32 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expression, ParseError> {
         let mut expr = self.primary()?;
 
-        // Handle chained indexing: arr[i][j]
-        while self.match_tokens(&[TokenKind::LBracket]) {
-            let index = self.expression()?;
-            self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
-            expr = Expression::Index(Box::new(IndexExpr { array: expr, index }));
+        // Handle chained indexing and function calls: arr[i][j] or foo()() or foo()[0]
+        loop {
+            if self.match_tokens(&[TokenKind::LBracket]) {
+                // Array indexing
+                let index = self.expression()?;
+                self.consume(TokenKind::RBracket, "Expected ']' after array index")?;
+                expr = Expression::Index(Box::new(IndexExpr { array: expr, index }));
+            } else if self.match_tokens(&[TokenKind::LParen]) {
+                // Function call
+                let mut arguments = Vec::new();
+                if !self.check(&TokenKind::RParen) {
+                    loop {
+                        arguments.push(self.expression()?);
+                        if !self.match_tokens(&[TokenKind::Comma]) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(TokenKind::RParen, "Expected ')' after arguments")?;
+                expr = Expression::Call(Box::new(CallExpr {
+                    callee: expr,
+                    arguments,
+                }));
+            } else {
+                break;
+            }
         }
 
         Ok(expr)
@@ -708,6 +832,17 @@ impl Parser {
             )
         }
     }
+
+    // Test helper methods - allow parsing statements directly for testing
+    #[cfg(test)]
+    pub fn parse_statement(&mut self) -> Result<Statement, ParseError> {
+        self.statement()
+    }
+
+    #[cfg(test)]
+    pub fn parse_expression(&mut self) -> Result<Expression, ParseError> {
+        self.expression()
+    }
 }
 
 #[cfg(test)]
@@ -719,17 +854,33 @@ mod tests {
     // Test Helper Functions
     // ============================================================================
 
-    fn parse(source: &str) -> Result<Program, ParseError> {
+    // Parse a full program (top-level declarations)
+    fn parse_program(source: &str) -> Result<Program, ParseError> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         parser.parse()
     }
 
+    // Parse a single statement (for testing statements in isolation)
+    fn parse_stmt(source: &str) -> Result<Statement, ParseError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_statement()
+    }
+
+    // Parse a single expression (for testing expressions in isolation)
+    fn parse_expr(source: &str) -> Result<Expression, ParseError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_expression()
+    }
+
+    // Helper to get the first statement from parsing
     fn parse_first_stmt(source: &str) -> Statement {
-        let program = parse(source).unwrap();
-        assert!(!program.statements.is_empty(), "Program has no statements");
-        program.statements[0].clone()
+        parse_stmt(source).unwrap()
     }
 
     fn parse_first_expr(source: &str) -> Expression {
@@ -756,7 +907,7 @@ mod tests {
     fn parse_first_block(source: &str) -> Block {
         match parse_first_stmt(source) {
             Statement::Block(block) => block,
-            _ => panic!("Expected yield statement"),
+            _ => panic!("Expected block statement"),
         }
     }
 
@@ -790,14 +941,14 @@ mod tests {
 
     #[test]
     fn test_parse_simple_expression() {
-        let program = parse("42;").unwrap();
-        assert_eq!(program.statements.len(), 1);
+        let stmt = parse_stmt("42;");
+        assert!(stmt.is_ok());
     }
 
     #[test]
     fn test_parse_binary_expression() {
-        let program = parse("1 + 2;").unwrap();
-        assert_eq!(program.statements.len(), 1);
+        let stmt = parse_stmt("1 + 2;");
+        assert!(stmt.is_ok());
     }
 
     #[test]
@@ -1078,40 +1229,42 @@ mod tests {
 
     #[test]
     fn test_parse_multiple_statements() {
-        let program = parse("let x = 5;\nlet y = 10;\nx + y;").unwrap();
-        assert_eq!(program.statements.len(), 3);
+        // Test that we can parse statements individually
+        assert!(parse_stmt("let x = 5;").is_ok());
+        assert!(parse_stmt("let y = 10;").is_ok());
+        assert!(parse_stmt("x + y;").is_ok());
     }
 
     #[test]
     fn test_parse_complex_expression() {
         // Just verify it parses without error
-        let program = parse("1 + 2 * 3 - 4 / 2;").unwrap();
-        assert_eq!(program.statements.len(), 1);
+        let stmt = parse_stmt("1 + 2 * 3 - 4 / 2;");
+        assert!(stmt.is_ok());
     }
 
     #[test]
     fn test_parse_error_missing_expression() {
-        assert!(parse("let x =;").is_err());
+        assert!(parse_stmt("let x =;").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_equals() {
-        assert!(parse("let x 42;").is_err());
+        assert!(parse_stmt("let x 42;").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_paren() {
-        assert!(parse("(1 + 2;").is_err());
+        assert!(parse_expr("(1 + 2").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_block() {
-        assert!(parse("{ let x = 5;").is_err());
+        assert!(parse_stmt("{ let x = 5;").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_semicolon() {
-        assert!(parse("let x = 5").is_err());
+        assert!(parse_stmt("let x = 5").is_err());
     }
 
     // ============================================================================
@@ -1301,9 +1454,8 @@ mod tests {
 
     #[test]
     fn test_parse_array_indexing_assignment() {
-        let program = parse("arr[0] = 42;").unwrap();
-        assert_eq!(program.statements.len(), 1);
-        match &program.statements[0] {
+        let stmt = parse_stmt("arr[0] = 42;").unwrap();
+        match stmt {
             Statement::Expression(Expression::Binary(binary)) => {
                 assert_eq!(binary.operator, BinaryOp::Assign);
                 match &binary.left {
@@ -1318,21 +1470,180 @@ mod tests {
     #[test]
     fn test_parse_array_literal_trailing_comma() {
         // Trailing comma should not be allowed
-        assert!(parse("[1, 2, 3,];").is_err());
+        assert!(parse_expr("[1, 2, 3,]").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_bracket() {
-        assert!(parse("[1, 2, 3;").is_err());
+        assert!(parse_expr("[1, 2, 3").is_err());
     }
 
     #[test]
     fn test_parse_error_missing_comma() {
-        assert!(parse("[1 2 3];").is_err());
+        assert!(parse_expr("[1 2 3]").is_err());
     }
 
     #[test]
     fn test_parse_error_unclosed_index() {
-        assert!(parse("arr[0;").is_err());
+        assert!(parse_expr("arr[0").is_err());
+    }
+
+    // ============================================================================
+    // Function and Declaration Parsing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_function_declaration() {
+        let program = parse_program("fun add(x: I32, y: I32): I32 { return x + y; }").unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0] {
+            Declaration::Function(func) => {
+                assert_eq!(func.name, "add");
+                assert_eq!(func.parameters.len(), 2);
+                assert_eq!(func.parameters[0].name, "x");
+                assert_eq!(func.parameters[0].param_type, Type::Signed(32));
+                assert_eq!(func.return_type, Some(Type::Signed(32)));
+            }
+            _ => panic!("Expected function declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_no_params() {
+        let program = parse_program("fun foo(): I32 { return 42; }").unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0] {
+            Declaration::Function(func) => {
+                assert_eq!(func.name, "foo");
+                assert_eq!(func.parameters.len(), 0);
+            }
+            _ => panic!("Expected function declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_no_return_type() {
+        let program = parse_program("fun foo() { return; }").unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0] {
+            Declaration::Function(func) => {
+                assert_eq!(func.name, "foo");
+                assert_eq!(func.return_type, None);
+            }
+            _ => panic!("Expected function declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_top_level_constant() {
+        let program = parse_program("fix PI: F64 = 3.14159;").unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0] {
+            Declaration::Constant(constant) => {
+                assert_eq!(constant.name, "PI");
+                assert_eq!(constant.const_type, Type::F64);
+            }
+            _ => panic!("Expected constant declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_return_statement() {
+        let stmt = parse_stmt("return 42;").unwrap();
+        match stmt {
+            Statement::Return(ret) => {
+                match ret.value {
+                    Expression::Integer(val) => assert_eq!(val, "42"),
+                    _ => panic!("Expected integer expression"),
+                }
+            }
+            _ => panic!("Expected return statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_return_void() {
+        let stmt = parse_stmt("return;").unwrap();
+        match stmt {
+            Statement::Return(ret) => {
+                match ret.value {
+                    Expression::Void => {}
+                    _ => panic!("Expected void expression"),
+                }
+            }
+            _ => panic!("Expected return statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call() {
+        let expr = parse_expr("add(1, 2)").unwrap();
+        match expr {
+            Expression::Call(call) => {
+                match &call.callee {
+                    Expression::Identifier(name) => assert_eq!(name, "add"),
+                    _ => panic!("Expected identifier as callee"),
+                }
+                assert_eq!(call.arguments.len(), 2);
+            }
+            _ => panic!("Expected function call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call_no_args() {
+        let expr = parse_expr("foo()").unwrap();
+        match expr {
+            Expression::Call(call) => {
+                assert_eq!(call.arguments.len(), 0);
+            }
+            _ => panic!("Expected function call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_function_calls() {
+        let expr = parse_expr("foo()()").unwrap();
+        match expr {
+            Expression::Call(outer_call) => {
+                match &outer_call.callee {
+                    Expression::Call(_) => {}
+                    _ => panic!("Expected inner call as callee"),
+                }
+            }
+            _ => panic!("Expected function call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call_with_array_indexing() {
+        let expr = parse_expr("foo()[0]").unwrap();
+        match expr {
+            Expression::Index(index) => {
+                match &index.array {
+                    Expression::Call(_) => {}
+                    _ => panic!("Expected call as array"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_complete_program() {
+        let source = r#"
+            fix PI: F64 = 3.14159;
+
+            fun add(x: I32, y: I32): I32 {
+                return x + y;
+            }
+
+            fun main(): I32 {
+                let result = add(5, 10);
+                return result;
+            }
+        "#;
+        let program = parse_program(source).unwrap();
+        assert_eq!(program.declarations.len(), 3);
     }
 }

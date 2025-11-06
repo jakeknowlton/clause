@@ -445,6 +445,8 @@ impl Lexer {
         let kind = match lexeme.as_str() {
             "let" => TokenKind::Let,
             "fix" => TokenKind::Fix,
+            "fun" => TokenKind::Fun,
+            "return" => TokenKind::Return,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,

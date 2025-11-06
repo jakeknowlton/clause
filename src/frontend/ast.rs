@@ -2,13 +2,41 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub statements: Vec<Statement>,
+    pub declarations: Vec<Declaration>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Declaration {
+    Function(FunctionDeclaration),
+    Constant(TopLevelConstant),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<Type>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    pub name: String,
+    pub param_type: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopLevelConstant {
+    pub name: String,
+    pub const_type: Type,
+    pub initializer: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     // Statements that require semicolons
     VariableDeclaration(VariableDeclaration),
+    Return(ReturnStatement),
     Yield(YieldStatement),
     Break(BreakStatement),
     Expression(Expression),
@@ -28,13 +56,18 @@ pub struct VariableDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStatement {
+    pub value: Expression, // Expression::Void when omitted
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct YieldStatement {
-    pub value: Expression,
+    pub value: Expression, // Expression::Void when omitted
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BreakStatement {
-    pub value: Expression,
+    pub value: Expression, // Expression::Void when omitted
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +90,9 @@ pub enum Expression {
 
     // Array indexing
     Index(Box<IndexExpr>),
+
+    // Function call
+    Call(Box<CallExpr>),
 
     // Block expression
     Block(Block),
@@ -88,6 +124,12 @@ pub struct UnaryExpr {
 pub struct IndexExpr {
     pub array: Expression,
     pub index: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallExpr {
+    pub callee: Expression,
+    pub arguments: Vec<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,10 +234,48 @@ impl fmt::Display for Type {
 // Pretty printing for AST
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for stmt in &self.statements {
-            writeln!(f, "{}", stmt)?;
+        for decl in &self.declarations {
+            writeln!(f, "{}", decl)?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for Declaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Declaration::Function(func) => write!(f, "{}", func),
+            Declaration::Constant(constant) => write!(f, "{}", constant),
+        }
+    }
+}
+
+impl fmt::Display for FunctionDeclaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "fun {}(", self.name)?;
+        for (i, param) in self.parameters.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", param)?;
+        }
+        write!(f, ")")?;
+        if let Some(ret_type) = &self.return_type {
+            write!(f, ": {}", ret_type)?;
+        }
+        write!(f, " {}", self.body)
+    }
+}
+
+impl fmt::Display for Parameter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.param_type)
+    }
+}
+
+impl fmt::Display for TopLevelConstant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "fix {}: {} = {};", self.name, self.const_type, self.initializer)
     }
 }
 
@@ -203,6 +283,7 @@ impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Statement::VariableDeclaration(decl) => write!(f, "{};", decl),
+            Statement::Return(return_stmt) => write!(f, "{};", return_stmt),
             Statement::Yield(yield_stmt) => write!(f, "{};", yield_stmt),
             Statement::Break(break_stmt) => write!(f, "{};", break_stmt),
             Statement::Expression(expr) => write!(f, "{};", expr),
@@ -221,6 +302,12 @@ impl fmt::Display for VariableDeclaration {
             write!(f, ": {}", ty)?;
         }
         write!(f, " = {}", self.initializer)
+    }
+}
+
+impl fmt::Display for ReturnStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "return {}", self.value)
     }
 }
 
@@ -259,6 +346,16 @@ impl fmt::Display for Expression {
             }
             Expression::Unary(unary) => write!(f, "({}{})", unary.operator, unary.operand),
             Expression::Index(index) => write!(f, "{}[{}]", index.array, index.index),
+            Expression::Call(call) => {
+                write!(f, "{}(", call.callee)?;
+                for (i, arg) in call.arguments.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
             Expression::Block(block) => write!(f, "{}", block),
             Expression::If(if_expr) => write!(f, "{}", if_expr),
             Expression::While(while_expr) => write!(f, "{}", while_expr),

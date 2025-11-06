@@ -34,6 +34,8 @@ pub enum TokenKind {
     // Keywords
     Let,
     Fix,
+    Fun,
+    Return,
     If,
     Else,
     While,
