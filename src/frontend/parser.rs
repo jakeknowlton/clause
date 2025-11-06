@@ -81,6 +81,16 @@ impl Parser {
         self.consume(TokenKind::LBrace, "Expected '{' before function body")?;
         let body = self.block()?;
 
+        // Check that no direct statements in function body are yields
+        for statement in &body.statements {
+            if matches!(statement, Statement::Yield(_)) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidSyntax,
+                    "yield statements are not allowed at function body level; use 'return' instead".to_string(),
+                ));
+            }
+        }
+
         Ok(Declaration::Function(FunctionDeclaration {
             name: name_str,
             parameters,
@@ -591,6 +601,16 @@ impl Parser {
         // Parse body block (required)
         self.consume(TokenKind::LBrace, "Expected '{' after while condition")?;
         let body = self.block()?;
+
+        // Check that no direct statements in while body are yields (breaks are allowed)
+        for statement in &body.statements {
+            if matches!(statement, Statement::Yield(_)) {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidSyntax,
+                    "yield statements are not allowed at while loop body level; use 'break' instead".to_string(),
+                ));
+            }
+        }
 
         // Parse optional else block
         let else_block = if self.match_tokens(&[TokenKind::Else]) {
@@ -1645,5 +1665,60 @@ mod tests {
         "#;
         let program = parse_program(source).unwrap();
         assert_eq!(program.declarations.len(), 3);
+    }
+
+    // ============================================================================
+    // Yield/Break Restriction Tests
+    // ============================================================================
+
+    #[test]
+    fn test_yield_not_allowed_in_function_body() {
+        let source = "fun foo(): I32 { <- 42; }";
+        let result = parse_program(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("yield"));
+    }
+
+    #[test]
+    fn test_yield_allowed_in_nested_block_in_function() {
+        let source = "fun foo(): I32 { { <- 42; } return 0; }";
+        let result = parse_program(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yield_allowed_in_if_block_in_function() {
+        let source = "fun foo(): I32 { if true { <- 42; } return 0; }";
+        let result = parse_program(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yield_not_allowed_in_while_body() {
+        let source = "while true { <- 42; }";
+        let result = parse_stmt(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("yield"));
+    }
+
+    #[test]
+    fn test_yield_allowed_in_nested_block_in_while() {
+        let source = "while true { { <- 42; } }";
+        let result = parse_stmt(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_break_allowed_in_while_body() {
+        let source = "while true { break 42; }";
+        let result = parse_stmt(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_return_allowed_in_function_body() {
+        let source = "fun foo(): I32 { return 42; }";
+        let result = parse_program(source);
+        assert!(result.is_ok());
     }
 }
