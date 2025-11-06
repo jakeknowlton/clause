@@ -6,12 +6,35 @@ grammar Clause;
 
 // Entry point for the program
 program
-    : statement* EOF
+    : declaration* EOF
+    ;
+
+// Top-level declarations (only functions and fix constants allowed)
+declaration
+    : functionDeclaration
+    | topLevelConstant
+    ;
+
+functionDeclaration
+    : FUN IDENTIFIER '(' parameterList? ')' (':' type)? block
+    ;
+
+parameterList
+    : parameter (',' parameter)*
+    ;
+
+parameter
+    : IDENTIFIER ':' type
+    ;
+
+topLevelConstant
+    : FIX IDENTIFIER ':' type '=' expression ';'
     ;
 
 // Statements
 statement
     : variableDeclaration
+    | returnStatement
     | yieldStatement
     | breakStatement
     | expressionStatement
@@ -21,7 +44,11 @@ statement
     ;
 
 variableDeclaration
-    : ('let' | 'fix') IDENTIFIER (':' type)? '=' expression ';'
+    : (LET | FIX) IDENTIFIER (':' type)? '=' expression ';'
+    ;
+
+returnStatement
+    : RETURN expression? ';'
     ;
 
 expressionStatement
@@ -29,11 +56,11 @@ expressionStatement
     ;
 
 yieldStatement
-    : YIELD expression ';'
+    : YIELD expression? ';'
     ;
 
 breakStatement
-    : BREAK expression ';'
+    : BREAK expression? ';'
     ;
 
 // Block-based statements (no semicolon required)
@@ -110,7 +137,16 @@ unary
     ;
 
 postfix
-    : primary ('[' expression ']')*
+    : primary (postfixOp)*
+    ;
+
+postfixOp
+    : '[' expression ']'           // Array indexing
+    | '(' argumentList? ')'        // Function call
+    ;
+
+argumentList
+    : expression (',' expression)*
     ;
 
 primary
@@ -172,6 +208,8 @@ type
 // Keywords
 LET         : 'let';
 FIX         : 'fix';
+FUN         : 'fun';
+RETURN      : 'return';
 IF          : 'if';
 ELSE        : 'else';
 WHILE       : 'while';
