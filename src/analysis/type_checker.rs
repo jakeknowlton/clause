@@ -5,8 +5,9 @@ use crate::analysis::typed_ast::{
 };
 use crate::error::{TypeError, TypeErrorKind};
 use crate::frontend::ast::{
-    BinaryExpr, BinaryOp, Block, BreakStatement, Expression, Program, Statement, Type, UnaryExpr,
-    UnaryOp, VariableDeclaration,
+    BinaryExpr, BinaryOp, Block, BreakStatement, Declaration, Expression, FunctionDeclaration,
+    Parameter, Program, ReturnStatement, Statement, TopLevelConstant, Type, UnaryExpr, UnaryOp,
+    VariableDeclaration,
 };
 use std::collections::HashMap;
 
@@ -38,7 +39,9 @@ pub struct TypeChecker {
     next_var_id: usize,
     constraints: Vec<Constraint>,
     substitution: Substitution,
-    in_loop: bool, // Track if we're currently inside a loop
+    in_loop: bool,                       // Track if we're currently inside a loop
+    functions: HashMap<String, (Vec<Type>, Option<Type>)>, // function name -> (param types, return type)
+    current_function_return_type: Option<Type>, // Expected return type of current function
 }
 
 impl TypeChecker {
@@ -49,6 +52,8 @@ impl TypeChecker {
             constraints: Vec::new(),
             substitution: HashMap::new(),
             in_loop: false,
+            functions: HashMap::new(),
+            current_function_return_type: None,
         }
     }
 
@@ -83,45 +88,108 @@ impl TypeChecker {
 
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, TypeError> {
         // Clear constraints and substitutions from previous calls
-        // but preserve scopes so variables persist in REPL
         self.constraints.clear();
         self.substitution.clear();
 
-        // Save the current global scope for rollback on error (important for REPL)
-        // If type checking fails, we don't want partially-declared variables in scope
-        let saved_global_scope = self.scopes[0].clone();
-
-        let result = (|| -> Result<TypedProgram, TypeError> {
-            // First pass: generate constraints
-            for statement in &program.statements {
-                self.check_statement(statement)?;
+        // First pass: register all function signatures and constants in global scope
+        for declaration in &program.declarations {
+            match declaration {
+                Declaration::Function(func) => {
+                    let param_types: Vec<Type> = func.parameters.iter()
+                        .map(|p| p.param_type.clone())
+                        .collect();
+                    self.functions.insert(
+                        func.name.clone(),
+                        (param_types, func.return_type.clone())
+                    );
+                }
+                Declaration::Constant(constant) => {
+                    // Add constant to global scope
+                    self.scopes[0].insert(
+                        constant.name.clone(),
+                        TypeVar::Concrete(constant.const_type.clone())
+                    );
+                }
             }
-
-            // Second pass: solve constraints
-            self.solve_constraints()?;
-
-            // Third pass: convert to typed IR with resolved types
-            let mut typed_statements = Vec::new();
-            for statement in &program.statements {
-                typed_statements.push(self.type_statement(statement)?);
-            }
-
-            Ok(TypedProgram {
-                statements: typed_statements,
-            })
-        })();
-
-        // If any pass failed, restore the global scope
-        if result.is_err() {
-            self.scopes[0] = saved_global_scope;
         }
 
-        result
+        // Second pass: type check all declarations
+        for declaration in &program.declarations {
+            match declaration {
+                Declaration::Function(func) => {
+                    self.check_function(func)?;
+                }
+                Declaration::Constant(constant) => {
+                    self.check_top_level_constant(constant)?;
+                }
+            }
+        }
+
+        // Solve constraints
+        self.solve_constraints()?;
+
+        // For now, return a stub TypedProgram
+        // TODO: Create proper typed declarations
+        Ok(TypedProgram {
+            statements: Vec::new(), // Empty for now
+        })
+    }
+
+    fn check_function(&mut self, func: &FunctionDeclaration) -> Result<(), TypeError> {
+        // Create new scope for function body
+        self.scopes.push(HashMap::new());
+
+        // Add parameters to scope
+        for param in &func.parameters {
+            self.scopes.last_mut().unwrap().insert(
+                param.name.clone(),
+                TypeVar::Concrete(param.param_type.clone())
+            );
+        }
+
+        // Set current function return type
+        self.current_function_return_type = func.return_type.clone();
+
+        // Type check function body
+        self.check_block(&func.body)?;
+
+        // Pop function scope
+        self.scopes.pop();
+
+        // Clear current function return type
+        self.current_function_return_type = None;
+
+        Ok(())
+    }
+
+    fn check_top_level_constant(&mut self, constant: &TopLevelConstant) -> Result<(), TypeError> {
+        // Type check the initializer
+        let init_type = self.infer_expression(&constant.initializer)?;
+
+        // Constrain initializer type to match declared type
+        self.add_constraint(init_type, TypeVar::Concrete(constant.const_type.clone()));
+
+        Ok(())
     }
 
     fn check_statement(&mut self, statement: &Statement) -> Result<TypeVar, TypeError> {
         match statement {
             Statement::VariableDeclaration(var_decl) => self.check_variable_declaration(var_decl),
+            Statement::Return(ret) => {
+                let return_type = self.infer_expression(&ret.value)?;
+
+                // Check that we're inside a function
+                if let Some(expected_return_type) = &self.current_function_return_type {
+                    self.add_constraint(return_type.clone(), TypeVar::Concrete(expected_return_type.clone()));
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::InvalidOperation,
+                        "Return statement outside of function".to_string(),
+                    ));
+                }
+
+                Ok(return_type)
+            }
             Statement::Yield(yield_stmt) => self.infer_expression(&yield_stmt.value),
             Statement::Break(break_stmt) => {
                 if !self.in_loop {
@@ -188,6 +256,48 @@ impl TypeChecker {
             Expression::Binary(binary) => self.check_binary_expression(binary),
             Expression::Unary(unary) => self.check_unary_expression(unary),
             Expression::Index(index_expr) => self.check_index_expression(index_expr),
+            Expression::Call(call) => {
+                // Get the function name from the callee
+                let func_name = match &call.callee {
+                    Expression::Identifier(name) => name,
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::InvalidOperation,
+                            "Only direct function calls are supported".to_string(),
+                        ));
+                    }
+                };
+
+                // Look up function signature
+                let (param_types, return_type) = self.functions.get(func_name)
+                    .ok_or_else(|| TypeError::new(
+                        TypeErrorKind::UndefinedVariable,
+                        format!("Undefined function: {}", func_name),
+                    ))?
+                    .clone();
+
+                // Check argument count
+                if call.arguments.len() != param_types.len() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::TypeMismatch,
+                        format!(
+                            "Function {} expects {} arguments, got {}",
+                            func_name,
+                            param_types.len(),
+                            call.arguments.len()
+                        ),
+                    ));
+                }
+
+                // Type check each argument
+                for (arg, expected_type) in call.arguments.iter().zip(param_types.iter()) {
+                    let arg_type = self.infer_expression(arg)?;
+                    self.add_constraint(arg_type, TypeVar::Concrete(expected_type.clone()));
+                }
+
+                // Return the function's return type
+                Ok(return_type.map(TypeVar::Concrete).unwrap_or(TypeVar::Concrete(Type::Void)))
+            }
             Expression::Block(block) => self.check_block(block),
             Expression::If(if_expr) => self.check_if_expression(if_expr),
             Expression::While(while_expr) => self.check_while_expression(while_expr),
@@ -484,8 +594,7 @@ impl TypeChecker {
         self.in_loop = true;
 
         // Check all statements in the body (for general type checking)
-        // But we'll handle break types separately
-        let yield_body_type = self.check_block(&while_expr.body)?;
+        self.check_block(&while_expr.body)?;
 
         self.in_loop = old_in_loop;
 
@@ -504,15 +613,9 @@ impl TypeChecker {
             }
             first_break_type
         } else {
-            // If no breaks, use the yield type (these are constrained to be the same)
-            yield_body_type.clone()
+            // If no breaks, use void
+            TypeVar::Concrete(Type::Void)
         };
-
-        // Make sure that break statements match any yields
-        match yield_body_type {
-            TypeVar::Concrete(Type::Void) => {}
-            _ => self.add_constraint(yield_body_type, body_type.clone()),
-        }
 
         // Check else block if present
         let result_type = if let Some(else_block) = &while_expr.else_block {
@@ -577,6 +680,9 @@ impl TypeChecker {
             }
             Statement::VariableDeclaration(var_decl) => {
                 self.collect_breaks_from_expression(&var_decl.initializer, breaks);
+            }
+            Statement::Return(return_stmt) => {
+                self.collect_breaks_from_expression(&return_stmt.value, breaks);
             }
             Statement::Yield(_) => {
                 // Yields don't contain breaks
@@ -654,6 +760,12 @@ impl TypeChecker {
             Expression::ArrayLiteral(elements) => {
                 for elem in elements {
                     self.collect_breaks_from_expression(elem, breaks);
+                }
+            }
+            Expression::Call(call) => {
+                self.collect_breaks_from_expression(&call.callee, breaks);
+                for arg in &call.arguments {
+                    self.collect_breaks_from_expression(arg, breaks);
                 }
             }
             Expression::Grouping(expr) => {
@@ -925,6 +1037,12 @@ impl TypeChecker {
             Statement::VariableDeclaration(var_decl) => Ok(TypedStatement::VariableDeclaration(
                 self.type_variable_declaration(var_decl)?,
             )),
+            Statement::Return(ret) => {
+                let typed_value = self.type_expression(&ret.value)?;
+                // For now, return expression statement stub
+                // TODO: Create TypedReturnStatement when needed
+                Ok(TypedStatement::Expression(typed_value))
+            }
             Statement::Yield(yield_stmt) => {
                 let typed_value = self.type_expression(&yield_stmt.value)?;
                 Ok(TypedStatement::Yield(TypedYieldStatement {
@@ -1163,6 +1281,38 @@ impl TypeChecker {
                     element_type,
                 })))
             }
+            Expression::Call(call) => {
+                // Get the function name from the callee
+                let func_name = match &call.callee {
+                    Expression::Identifier(name) => name,
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::InvalidOperation,
+                            "Only direct function calls are supported".to_string(),
+                        ));
+                    }
+                };
+
+                // Look up function signature
+                let (param_types, return_type) = self.functions.get(func_name)
+                    .ok_or_else(|| TypeError::new(
+                        TypeErrorKind::UndefinedVariable,
+                        format!("Undefined function: {}", func_name),
+                    ))?
+                    .clone();
+
+                // Type check each argument
+                let mut typed_args = Vec::new();
+                for (arg, expected_type) in call.arguments.iter().zip(param_types.iter()) {
+                    let typed_arg = self.type_expression_with_hint(arg, Some(expected_type))?;
+                    typed_args.push(typed_arg);
+                }
+
+                // For now, return a typed identifier with the return type
+                // TODO: Create proper TypedCallExpr when needed
+                let result_type = return_type.unwrap_or(Type::Void);
+                Ok(TypedExpression::Identifier(func_name.clone(), result_type))
+            }
             Expression::Block(block) => {
                 let typed_block = self.type_block(block)?;
                 Ok(TypedExpression::Block(typed_block))
@@ -1241,11 +1391,8 @@ impl TypeChecker {
             // Type the first break to get the result type
             let first_break_type = self.type_expression(&breaks[0].value)?.get_type();
             first_break_type
-        } else if let Some(ref else_block_typed) = typed_else_block {
-            // No breaks, use else block type
-            else_block_typed.block_type.clone()
         } else {
-            // No breaks and no else block
+            // No breaks
             Type::Void
         };
 
@@ -1303,5 +1450,201 @@ impl TypeChecker {
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::lexer::Lexer;
+    use crate::frontend::parser::Parser;
+
+    fn parse_and_check(source: &str) -> Result<TypedProgram, TypeError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        let mut type_checker = TypeChecker::new();
+        type_checker.check_program(&program)
+    }
+
+    #[test]
+    fn test_simple_function() {
+        let source = r#"
+            fun add(x: I32, y: I32): I32 {
+                return x + y;
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_no_return_type() {
+        let source = r#"
+            fun foo() {
+                let x = 5;
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_with_void_return() {
+        let source = r#"
+            fun foo(): Void {
+                return;
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_call() {
+        let source = r#"
+            fun add(x: I32, y: I32): I32 {
+                return x + y;
+            }
+
+            fun main(): I32 {
+                return add(5, 10);
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_call_wrong_arg_count() {
+        let source = r#"
+            fun add(x: I32, y: I32): I32 {
+                return x + y;
+            }
+
+            fun main(): I32 {
+                return add(5);
+            }
+        "#;
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("expects 2 arguments"));
+    }
+
+    #[test]
+    fn test_function_call_wrong_arg_type() {
+        let source = r#"
+            fun foo(x: I32): I32 {
+                return x;
+            }
+
+            fun main(): I32 {
+                return foo(true);
+            }
+        "#;
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_undefined_function() {
+        let source = r#"
+            fun main(): I32 {
+                return bar();
+            }
+        "#;
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Undefined function"));
+    }
+
+    #[test]
+    fn test_top_level_constant() {
+        let source = r#"
+            fix PI: F64 = 3.14159;
+
+            fun getPI(): F64 {
+                return PI;
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_top_level_constant_wrong_type() {
+        let source = r#"
+            fix X: I32 = 3.14;
+        "#;
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_return_type_mismatch() {
+        let source = r#"
+            fun foo(): I32 {
+                return true;
+            }
+        "#;
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_function_with_parameters() {
+        let source = r#"
+            fun mul(a: I32, b: I32, c: I32): I32 {
+                return a * b * c;
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_recursive_function_call() {
+        let source = r#"
+            fun factorial(n: I32): I32 {
+                if n == 0 {
+                    return 1;
+                }
+                return n * factorial(n - 1);
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_multiple_functions() {
+        let source = r#"
+            fun add(x: I32, y: I32): I32 {
+                return x + y;
+            }
+
+            fun sub(x: I32, y: I32): I32 {
+                return x - y;
+            }
+
+            fun calc(): I32 {
+                return add(10, sub(20, 5));
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_with_array_param() {
+        let source = r#"
+            fun sum(arr: [I32, 3]): I32 {
+                return arr[0] + arr[1] + arr[2];
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_function_returning_array() {
+        let source = r#"
+            fun makeArray(): [I32, 3] {
+                return [1, 2, 3];
+            }
+        "#;
+        assert!(parse_and_check(source).is_ok());
     }
 }
