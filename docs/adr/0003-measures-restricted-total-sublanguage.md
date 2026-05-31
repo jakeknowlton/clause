@@ -2,7 +2,12 @@
 
 **Status:** accepted
 
-Only functions marked `measure` may appear inside constraint predicates, and a
+Which functions may appear inside a constraint predicate depends on the
+constraint's **verification mode**: a **`static`** predicate may use only
+`measure` functions (the solver reasons about them); a **`dynamic`** predicate
+may use any `pure` function (it is only executed at runtime, never reasoned
+about — a non-terminating dynamic check is a hang, not unsoundness). Predicates
+are restricted to runtime-evaluable forms (bounded quantifiers only). A
 `measure` is restricted to a sublanguage that is **total by construction**:
 side-effect-free, structural recursion only (recursive calls must be on a
 strictly smaller component of an input — no general loops or general recursion),
@@ -25,11 +30,13 @@ ADR-0001 timeout ⇒ Unknown ⇒ runtime-check path.
 
 ## Consequences
 
-- The `static`/`dynamic` verification-mode split is about *solver* decidability,
-  never about measure totality — every type-level function is guaranteed total.
+- The `measure` restriction guarantees sound axioms for **static** predicates;
+  **dynamic** predicates need only purity. Among *static* predicates, the
+  proof/solver-timeout split is about solver decidability, not measure totality
+  (every measure is total).
 - Arbitrary iterative/general-recursive pure algorithms cannot be used directly
   in constraints; restructure into structural recursion, or use a `dynamic`
-  predicate / `assume` boundary.
+  predicate.
 - Structural recursion covers the common measures (len, height, sum, contains,
   sorted, balanced, …), so the restriction retains practical usefulness.
 - `pure` and `measure` are distinct keywords with distinct guarantees.

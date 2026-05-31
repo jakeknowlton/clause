@@ -39,12 +39,16 @@ unchecked — and the developer is always told where the prover gave up.
 **Verification modes** (a type may carry several conjoined constraints, each with
 its own mode):
 - `static` (default) — try to prove; fall back to a runtime check if Unknown.
-- `dynamic` — skip the solver, always check at runtime (for arbitrarily
-  expressive predicates).
-- `assume` — never checked; taken on faith (FFI boundaries; loud & greppable).
+  May use only `measure` functions.
+- `dynamic` — skip the solver, always check at runtime; may use any `pure`
+  function.
 
-Once any checked constraint holds, downstream code may treat it as a **proven
-fact** and feed it to the solver.
+There are only these two modes: every constraint is either *proven* or
+*runtime-guaranteed* — nothing is ever merely trusted (which is why predicates
+are kept runtime-evaluable: bounded quantifiers only). Once any checked
+constraint holds, downstream code may treat it as a **proven fact** and feed it
+to the solver. Modes are part of the type's representation but do not affect
+subtyping, which uses only the logical predicate.
 
 **Predicate language.** A decidable core (boolean logic, equality, linear integer
 arithmetic, arrays/sequences) extended by **measures** [ADR-0003]: functions
@@ -128,7 +132,7 @@ opt into wrapping. Silent wraparound is eliminated by default.
 
 [ADR-0008] **Recoverable, world-dependent** failures are **`Result<T, E>`** values
 with `?`-propagation — no exceptions (the solver never models non-local exits).
-**Proof failures** (failed runtime checks, overflow, violated `assume`)
+**Proof failures** (failed runtime checks, overflow)
 **trap/abort**, non-catchably. The dividing line: *preventable-by-proof ⇒
 constraint/trap* (`xs[i]`, `a/b`, casts); *world-dependent ⇒ Result* (I/O,
 parsing). Clause thus replaces much `Option`/`Result` ceremony with proofs.
@@ -148,8 +152,9 @@ regions/arenas, and verifier-assisted refcount elision.
 [ADR-0010] A quarantined trust boundary keeps the safe core safe:
 - **`Ptr<T>`** — raw, unmanaged, nullable pointer, distinct from a managed
   reference.
-- **`unchecked`** region — the only place raw-pointer deref, `extern` C calls, and
-  `assume` are allowed; all unsafety is named and greppable.
+- **`unchecked`** region — the only place raw-pointer deref and `extern` C calls
+  are allowed; all unsafety is named and greppable. Constraints on C-returned
+  data are enforced with ordinary `dynamic` runtime checks.
 - Layout-compatible **structs** are the ABI interchange; `extern` declares C
   signatures.
 
@@ -210,3 +215,4 @@ object model anticipates atomic/handoff refcounting for shared immutable data.
 - ADR-0010 — C FFI boundary (`Ptr<T>`, `unchecked`, structs as ABI)
 - ADR-0011 — Compiler architecture (staged bootstrap, typed MIR, layered solver)
 - ADR-0012 — Concurrency direction (message-passing, deferred)
+- ADR-0013 — No `assume` mode (every constraint proven or runtime-checked)

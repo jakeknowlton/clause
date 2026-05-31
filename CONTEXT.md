@@ -8,6 +8,9 @@ managed by **automatic reference counting with reuse analysis** (not tracing
 GC), whose distinguishing feature is **constraints**: refinement predicates on
 values that the compiler verifies, proving as many as possible at compile time.
 
+Source files use the **`.cla`** extension (chosen over `.cl`/`.cls`, which
+collide with OpenCL/Common Lisp and LaTeX/Apex respectively).
+
 ---
 
 ## Glossary
@@ -37,9 +40,10 @@ class constraints" of Clause's vision. No implementation inheritance (ADR-0004).
 The C-interop vocabulary. **`Ptr<T>`** is a raw, **unmanaged** pointer (not
 refcounted, may be null, carries no assumed constraints) — distinct from a
 Clause reference (which is managed, non-null, always valid). **`unchecked`**
-demarcates the trust region: the only place raw-pointer dereference, `extern` C
-calls, and `assume` are permitted, so the rest of the language stays provably
-safe and every unsafe act is greppable. **`extern`** declares an imported C
+demarcates the trust region: the only place raw-pointer dereference and `extern`
+C calls are permitted, so the rest of the language stays provably safe and every
+unsafe act is greppable. Constraints on C-returned data are enforced with
+ordinary `dynamic` runtime checks. **`extern`** declares an imported C
 function signature. Layout-compatible **`struct`s** are the ABI interchange
 currency; `class`es (with headers/refcounts) are not passed to C directly. See
 ADR-0010.
@@ -53,7 +57,9 @@ extension). **Closures** capture their environment by **immutable snapshot**
 (copy value types, retain references) — never by mutable reference, so no mutable
 state is aliased across the closure boundary (consistent with ADR-0002). Sharing
 mutable state into a closure requires passing an explicit reference (`class`).
-Closure objects are heap-allocated and ARC-managed.
+Closure objects are heap-allocated and ARC-managed. Lambda syntax uses a fat
+arrow: `(x, y) => x + y` (parens optional for a single param), keeping `->`
+exclusively for function *types*.
 
 ### Operators / Iterator / coherence / deriving
 **Operators** are sugar for built-in **interfaces** (`+` → `Add::add`, etc.); no
@@ -66,10 +72,14 @@ making range `for`-loops a prime site for proving away bounds checks.
 auto-derived structurally.
 
 ### match
-The pattern-matching expression over enums/structs/literals, with binding,
-nesting, and `where` guards. Because enums are closed, **exhaustiveness is a
-proof** — a non-exhaustive match is a compile error, and within each arm the
-solver knows the concrete variant.
+The matching expression (arms use `=>`). An arm-left is either a **structural
+pattern** (variant/tuple/struct/slice/literal/range, with sub-bindings) or a
+**condition arm** — a `Bool` expression mentioning **`it`** (the scrutinee).
+There are **no `where`/`if` guards**; the only catch-all is `_`, and the
+scrutinee is reached via `it`. **Exhaustiveness is a proof:** structural matches
+by closed-variant coverage, condition matches when the solver proves the arms
+total (else a `_` is required). Within a structural arm the solver knows the
+concrete variant. No `@`-bindings.
 
 ### init
 An unnamed class constructor. A class may declare several `init`s; they are
@@ -149,13 +159,24 @@ How a single constraint is checked. A type may carry several constraints
 - **static** (default) — proven at compile time where possible; Refuted ⇒
   compile error, Unknown ⇒ runtime check.
 - **dynamic** — solver is skipped entirely; always a runtime check. Lets the
-  predicate be arbitrarily expressive at the cost of a guaranteed runtime check.
-- **assume** — never checked, compile-time *or* runtime; taken on faith. Breaks
-  soundness if wrong; reserved for FFI boundaries / hand-verified code.
+  predicate use any `pure` function at the cost of a guaranteed runtime check.
+
+There are only these two modes: every constraint is either *proven* (`static`)
+or *runtime-guaranteed* (`dynamic`) — Clause has no "trusted/unchecked" fact, so
+nothing is ever taken on faith. (This is why the predicate language is kept
+runtime-evaluable: bounded quantifiers only.)
 
 Once any checked constraint (static-proven, or dynamic/static-checked at runtime
 past its check point) holds, downstream code may treat it as a **proven fact**
 and feed it to the solver as an assumption.
+
+Modes **are** carried in the type (a refinement is base + a list of moded
+constraints, written the same way in `where`-form and set-builder). But
+**subtyping / precondition-satisfaction depends only on the logical predicates**
+— a value of `{v | p}` satisfies a requirement for `{p' | p}` regardless of
+either side's modes. Modes instead drive: **well-formedness** (`static` ⇒ only
+`measure` functions; `dynamic` ⇒ any `pure` function) and the **code emitted** at
+establishment/discharge sites. See [[refinement-type]].
 
 ### Base type
 The unrefined type of a value — `I32`, `Bool`, `[T, N]`, a class, etc. Base
@@ -165,8 +186,9 @@ has exactly one base type.
 ### String / collections / slice
 **`String`** is immutable, UTF-8, ARC-managed (O(1) sharing); its byte-length is
 a `measure`. Integer indexing `s[i]` means *bytes* and requires `i < byteLen(s)`
-(a constraint); code points/graphemes come from iterators (no O(1) char
-indexing). A mutable **`StringBuilder`** handles construction. C strings cross
+(a constraint); code points come from iterators (no O(1) char indexing) as
+**`Char`** values (a primitive Unicode-scalar type with `'a'`/`'\u{…}'`
+literals). A mutable **`StringBuilder`** handles construction. C strings cross
 only inside `unchecked`. Growable **`List<T>` / `Map<K,V>` / `Set<T>`** are
 standard-library types written in Clause, ARC-managed, exposing `len` and
 contract-carrying APIs (`pop` requires non-empty, etc.). A **`Slice<T>`** is an
@@ -207,11 +229,13 @@ types produced during inference and resolved by the unifier (what the current
 
 ### Precondition / Postcondition
 A **precondition** is a constraint a function's caller must establish before the
-call; written as a refinement on a parameter type (per-param) or in a
-function-level `where` clause (relational, over several params). A
-**postcondition** is a constraint the function body must establish; written as a
-refinement on the return type, where the pronoun `it` binds the result and may
-reference any (immutable) parameter.
+call; written either inline on a parameter (`x: I32 where x > 0`, sugar for a
+single-param case) or in the **pre-`->` `where` zone** of the signature, which
+may reference all parameters and (in a method) `self` — covering relational and
+receiver-state preconditions. A **postcondition** is a constraint the body must
+establish; written in the **post-return `where` zone**, where `it` binds the
+result and may reference any (immutable) parameter. Position disambiguates:
+before `->` ⇒ precondition; after the return type ⇒ postcondition.
 
 ### Modular verification
 Each function is verified once against its signature: the body is checked
@@ -252,7 +276,7 @@ The two failure channels (ADR-0008). **`Result<T, E>`** is a value-level enum
 for recoverable, world-dependent errors (file I/O, parsing), propagated with a
 `?`-style operator; there are no exceptions. A **trap** is the unrecoverable,
 non-catchable abort taken when a *proof failure* occurs at runtime (a failed
-constraint check, overflow, or violated `assume`). Dividing line:
+`dynamic`/fallback constraint check, or an overflow). Dividing line:
 preventable-by-proof ⇒ constraint/trap; world-dependent ⇒ `Result`.
 
 ### fix / let

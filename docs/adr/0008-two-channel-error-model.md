@@ -9,7 +9,7 @@ Clause separates failure into two channels with a sharp dividing line:
   failure is explicit in the type, control flow stays local, and the solver
   never has to model implicit non-local exits.
 - **Proof failures** (a runtime constraint check failing per ADR-0001, an
-  overflow trap per ADR-0006, a violated `assume`) **trap/abort, fail-fast, and
+  overflow trap per ADR-0006) **trap/abort, fail-fast, and
   are not catchable** as ordinary errors. At most a top-level last-breath handler
   (log/flush/exit) is permitted; no general recovery.
 
