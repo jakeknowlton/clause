@@ -53,10 +53,16 @@ Functions are first-class values; a function type is `(A, B) -> C` and carries
 the param/return **refinements** as part of the type (with contravariant
 preconditions / covariant postconditions when one function type is used where
 another is expected; fully-general higher-order contracts are a later
-extension). **Closures** capture their environment by **immutable snapshot**
-(copy value types, retain references) — never by mutable reference, so no mutable
-state is aliased across the closure boundary (consistent with ADR-0002). Sharing
-mutable state into a closure requires passing an explicit reference (`class`).
+extension). A function type may also carry a leading **`pure`** (`pure (A, B)
+-> C`), a subtype of the impure arrow — see [[pure]] and ADR-0015. **Closures**
+capture their environment by **immutable snapshot**: a captured value type is
+copied (a frozen copy the closure may read but not write), a captured reference
+is retained. What is never aliased is a **mutable binding** — the enclosing
+variable cannot be reassigned or mutated *through* the closure. A captured
+`class` reference does still share its referent's method-mediated mutable state —
+that *is* the sanctioned way to share mutable state into a closure; soundness
+holds because dependent predicates may reference only immutable values/fields
+(ADR-0002), so no proof rests on that shared heap state.
 Closure objects are heap-allocated and ARC-managed. Lambda syntax uses a fat
 arrow: `(x, y) => x + y` (parens optional for a single param), keeping `->`
 exclusively for function *types*.
@@ -85,7 +91,9 @@ concrete variant. No `@`-bindings.
 An unnamed class constructor. A class may declare several `init`s; they are
 distinguished by their **base-type signature** (the ordered list of parameter
 base types, with refinements *erased*). No two `init`s — and more generally no
-two overloads of any function/method — may share a base-type signature.
+two overloads of any function/method — may have **unifiable** base-type
+signatures (collision = a common instance, checked by unification at declaration;
+this also forbids generic/concrete *specialization* pairs — see ADR-0005).
 Parameters may still carry refinements as preconditions; those just don't
 participate in dispatch. Called as `Account()`, `Account(100)`, etc. Each `init`
 must definitely-assign all fields and establishes the invariant on return.
@@ -122,10 +130,15 @@ verified differ by type kind:
   literal and every field-write site — sound because value semantics give no
   aliasing. Relational invariants that can't be maintained field-by-field are
   preserved by functional whole-value update.
-- **class** (reference, encapsulated): *established* by a constructor (its
-  implicit postcondition) and *maintained* across public-method boundaries
-  (assume-on-entry / re-establish-on-exit; may break temporarily inside; private
-  helpers exempt). Mutation flows through methods.
+- **class** (reference, encapsulated): an **implicit precondition of every
+  public-method call (any receiver, `self` included) and postcondition of every
+  public-method body**. *Established* by each `init`; *assumed* on entry and
+  *re-established* on exit; may break temporarily inside, where intermediate work
+  uses **private helpers** (which carry neither obligation) — no *public* method
+  may be called until it is re-established. Making it a call-site precondition
+  even for `self`-calls closes the reentrancy hole (ADR-0016); external callers
+  never feel it, since any validly-constructed object already satisfies it.
+  Mutation flows through methods.
 
 A C-interop struct simply declares no invariant and is plain data.
 
@@ -192,20 +205,53 @@ literals). A mutable **`StringBuilder`** handles construction. C strings cross
 only inside `unchecked`. Growable **`List<T>` / `Map<K,V>` / `Set<T>`** are
 standard-library types written in Clause, ARC-managed, exposing `len` and
 contract-carrying APIs (`pop` requires non-empty, etc.). A **`Slice<T>`** is an
-ARC-retaining view with its own length — because it retains its backing storage,
-Clause needs **no lifetimes**.
+ARC-retaining **snapshot** view with its own length: it never observes later
+mutation of its source. Slicing is O(1) (retain + offset + length); because
+retaining the backing buffer makes it shared, the source's next mutation
+copies-on-write (ADR-0009 reuse mutates in place only at refcount 1), so the
+slice keeps a stable snapshot — no aliasing, **no lifetimes**, and no copy at all
+for immutable sources like `String` or `fix` arrays.
 
-### Standard library
-A **tiny intrinsic core** (primitives, `[T,N]`, `Option`, `Result`, `String`,
-the `Ptr`/FFI bits) is built into the compiler; everything else is **written in
-Clause**, dogfooding self-hosting and the constraint system.
+### Standard library (`core` / `std`)
+Two packages. **`core`** is the intrinsic layer shipped with the compiler
+(primitives, `[T,N]`, `Option`, `Result`, `String`, `Ptr`/FFI, the growable
+collections, the fundamental interfaces); its freestanding line is *no OS / no
+syscalls* — **not** *no allocator* (ARC is Clause's universal memory model, so
+`String` and the collections, all ARC-managed, live in `core`). **`std`** is the
+hosted library **written in Clause** (`std::io`, `std::time`, `std::env`, …),
+dogfooding self-hosting and the constraint system. Only **`core::prelude`** (the
+core types + fundamental interfaces — the grammar's "prelude types") is
+auto-imported into every module; **`std` is always explicit**
+(`import std::io::{println};`), so every name's provenance is visible. See
+ADR-0017.
 
 ### Int (mathematical integer)
-The unbounded mathematical integer the solver reasons over. The machine integer
-types (`I8`…`I64`, `U8`…`U64`) are defined as `Int` refined by a range, so
-arithmetic is exact in the logic and overflow is just the target type's range
-refinement (see ADR-0006). Wrapping (`+%`, `-%`, `*%`) opts into modular
-semantics explicitly.
+The unbounded mathematical integer the solver reasons over — a **logical,
+compile-time-only** type with **no runtime representation** (it cannot type a
+stored runtime value). `Nat` is shorthand for `{ v: Int | v >= 0 }`. The machine
+integer types (`I8`…`I64`, `U8`…`U64`) are defined as `Int` refined by a range,
+so arithmetic is exact in the logic and overflow is just the target type's range
+refinement (see ADR-0006). The solver's domain is **linear integer arithmetic**
+over `Int`; the bitwise/shift/wrapping operators (`&`, `|`, `^`, `~`, `<<`, `>>`,
+`+%`, `-%`, `*%`), which LIA cannot express, are reasoned about through a
+**bitvector bridge** instead. Programs needing arbitrary precision at runtime use
+the opt-in [[bigint]] value type, distinct from this logical `Int`. Unsuffixed
+numeric literals are **context-polymorphic** and default to `I64`/`F64` when
+unconstrained — never to `Int` (which has no runtime form).
+
+### BigInt
+The opt-in **arbitrary-precision integer value type** (heap-allocated,
+ARC-managed) for the rare program that needs unbounded integers at runtime —
+distinct from [[int]], the solver's logical reasoning type, which has no runtime
+representation. A standard-library type, not part of the intrinsic core.
+
+### Float (F16 / F32 / F64)
+IEEE-754 binary floating point. **Outside the static reasoning core** (v1): not
+range-refined, arithmetic is inexact, and `/`/overflow/domain errors are
+IEEE-*total* (±inf/NaN, no trap — unlike integers). NaN makes ordering non-total.
+Float-involving constraints are effectively `dynamic`/runtime (sound, not
+statically proven); full FP-theory (QF_FP) reasoning is a later frontier. See
+ADR-0006, ADR-0008.
 
 ### Refinement predicate
 The logical proposition half of a constraint — the `{ v | P(v) }` part. Checked
@@ -223,9 +269,9 @@ low-coupled to Z3 so more solving can move native over time. See ADR-0011.
 
 ### Type equation
 **(Internal term — renamed to avoid collision.)** An equality between base
-types produced during inference and resolved by the unifier (what the current
-`type_checker.rs` calls a "constraint"). Has nothing to do with the user-facing
-**Constraint** feature.
+types produced during inference and resolved by the unifier (what a
+Hindley–Milner type checker conventionally calls a "constraint"). Has nothing to
+do with the user-facing **Constraint** feature.
 
 ### Precondition / Postcondition
 A **precondition** is a constraint a function's caller must establish before the
@@ -246,18 +292,32 @@ whole-program constraint checking tractable.
 
 ### Measure
 A function usable *inside* a constraint predicate, marked with the `measure`
-keyword. A measure belongs to a restricted **total-by-construction**
-sublanguage: side-effect-free, structural recursion only (no general loops or
-recursion), and total operations only (no trapping ops; partial operations like
-indexing/division require their guards to be provable). Measures are the *only*
-functions that may appear in predicates. Termination is guaranteed by the
-sublanguage's *form*, not by a termination prover. See ADR-0003.
+keyword. A measure belongs to a restricted **total** sublanguage:
+side-effect-free, **well-founded recursion** (every recursive call must strictly
+decrease a metric under a well-founded order — structural sub-term for `enum`s,
+the value for `Nat`, `len` for sequences, lexicographic for several — with the
+metric inferred by default and overridable by a `decreases` clause), and total
+operations only (no trapping ops; partial operations like indexing/division
+require their guards to be provable). Measures are the *only* functions that may
+appear in predicates, but a measure is **also callable as an ordinary (pure)
+function**; its signature uses machine types (`-> U64`, …), with `Nat`/`Int`
+being only the solver's *view* of those values, never written in a signature.
+**Totality is mandatory and compile-time-proven**: the
+per-call decrease obligation has no runtime fallback (unlike ordinary
+constraints), because a non-total measure would inject inconsistent axioms into
+the solver. See ADR-0003.
 
 ### pure
-A modifier marking a general function as side-effect-free (deterministic, no
-I/O, no non-local mutation). Distinct from `measure`: a `pure` function is *not*
-necessarily total and may *not* appear in predicates. (Purity is still useful
-for optimization and reasoning.)
+A modifier marking a function **observably effect-free and
+deterministic-within-a-run**: no I/O, no FFI, calls only `pure` functions,
+mutates only value-typed locals, and reads only immutable (`fix`) state. A
+**checked** annotation (verified, part of the contract), enforced transitively
+with no aliasing analysis (mutation flows through methods; value locals don't
+alias). Distinct from [[measure]] (`measure ⊂ pure`): a `pure` function need not
+be total and may **not** appear in `static` predicates — but it is the function
+vocabulary for `dynamic` predicates, and it licenses optimization. Higher-order
+purity is expressed by a purity bit on function types (`pure (A) -> B` is a
+subtype of `(A) -> B`). See ADR-0015.
 
 ### ARC / reuse / weak
 Clause's memory management. **ARC** = automatic reference counting: the compiler

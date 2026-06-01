@@ -34,15 +34,20 @@ blockStatement = ifExpr | whileExpr | forExpr | matchExpr | block ;
 // Three parallel value-exits, one per construct (each takes a bare value):
 //   `<- v`     evaluates a BLOCK     `break v`  evaluates a LOOP
 //   `return v` evaluates a FUNCTION
-// `<-` never produces a loop's value (a loop body's per-iteration value is
-// discarded); a loop's value comes from `break v` or its `else` completion block.
+// `<-` yields ONLY a block consumed as a value (a binding RHS, or an if / match /
+// loop-`else` branch). A FUNCTION body block produces the function's value via
+// `return` (or the `= expression` body) — never a top-level `<-`. A LOOP body
+// block's per-iteration value is discarded; the loop's value comes from `break v`
+// or its `else` completion block. (Body blocks run for effect use return/break;
+// only value-consumed blocks use `<-`.)
 yieldStatement    = '<-' expression? ;       // value of the enclosing block
 breakStatement    = 'break' expression? ;    // value of the enclosing loop (and exits it)
 continueStatement = 'continue' ;
 returnStatement   = 'return' expression? ;   // value of the enclosing function
 ```
 
-Function bodies may be a `block` or an expression-body `= expression` (see §3).
+Function bodies may be a `block` (value via `return`) or an expression-body
+`= expression` (see §3).
 
 ## 2. Bindings & `where` clauses
 
@@ -80,12 +85,19 @@ funcDecl     = funcModifier* 'fun' IDENTIFIER genericParams? '(' paramList? ')'
 measureDecl  = visibility? 'measure' IDENTIFIER genericParams? '(' paramList? ')'
                whereClause*                        // preconditions (e.g. domain restriction)
                '->' typeExpr
+               decreasesClause?                    // termination metric (default inferred)
                funcBody ;          // body restricted to the total sublanguage (semantic check)
+
+// Well-founded termination metric. Default is inferred (ADR-0003); supply
+// explicitly when the default guess fails. >1 expression ⇒ lexicographic order.
+// The per-call decrease is PROVEN or it is a compile error (no runtime fallback).
+decreasesClause = 'decreases' expression ( ',' expression )* ;
 
 funcModifier = visibility | 'pure' ;
 visibility   = 'public' | 'internal' ;            // absence = private (module-only)
 
-funcBody     = block | '=' expression ';' ;
+funcBody     = block | '=' expression ';' ;   // block body → value via `return`;
+                                               //   `= expr` → that expression is the value
 
 paramList    = param ( ',' param )* ;
 param        = IDENTIFIER ':' typeExpr whereClause* ;   // per-param precondition (inline sugar)
@@ -106,7 +118,10 @@ interfaceBound = typePath ( '+' typePath )* ;     // e.g.  T: Ord + Hash
 ```ebnf
 typeExpr      = funcType | postfixType ;
 
-funcType      = '(' ( typeExpr ( ',' typeExpr )* )? ')' '->' typeExpr ;
+funcType      = 'pure'? '(' ( typeExpr ( ',' typeExpr )* )? ')' '->' typeExpr ;
+                // 'pure (A) -> B' is a SUBTYPE of '(A) -> B' (purity may be
+                // forgotten, never invented). Lets a higher-order fn require a
+                // pure callback and so be pure itself (ADR-0015).
 postfixType   = atomType '?'* ;               // T?  ==  Option<T>  (may stack: T?? )
 
 atomType      = primitiveType
@@ -126,7 +141,8 @@ genericArgs   = '<' typeExpr ( ',' typeExpr )* '>' ;
 typePath      = IDENTIFIER ( '::' IDENTIFIER )* ;
 primitiveType = 'I8'|'I16'|'I32'|'I64'|'U8'|'U16'|'U32'|'U64'
               | 'F16'|'F32'|'F64'|'Bool'|'Void'|'Char' ;
-              // String/Option/Result/Ptr/List are prelude types (a `path`), not reserved
+              // String/Option/Result/Ptr/List are core::prelude types: auto-imported
+              // (a `path`), not reserved. std (incl. I/O) is always explicit (ADR-0017).
 ```
 
 Notes:
@@ -263,6 +279,15 @@ Notes:
   top level of an `if`/`while`/`for`/`match` scrutinee; parenthesize it there
   (`if (Point { x: 0 }).is_origin() { … }`). Elsewhere it is unambiguous.
 - `void` is the unit value (type `Void`). Assignment expressions have type `Void`.
+- **Integer operator typing (ADR-0006):** comparison/equality (`== != < <= > >=`)
+  is allowed between *any* integer types (evaluated in `Int`, mathematically
+  correct — no signed/unsigned surprise); arithmetic/bitwise require a shared
+  machine type, with context-polymorphic literals adapting to the other operand.
+- A unary `-`/`+` on a numeric **literal** folds into the signed constant before
+  range-checking (so `-128` is a valid `I8`).
+- **Operator semantics (ADR-0018):** `/` truncates toward zero, `%` follows the
+  dividend; a shift amount is constrained `0 <= b < bitwidth`; `>>` is arithmetic
+  (signed) / logical (unsigned); `<<` drops high bits (no overflow check).
 
 ## 7. Closures, match, patterns
 
@@ -300,6 +325,8 @@ Notes:
   reach the scrutinee in any body via `it` (no bare-identifier catch-all).
 - **Exhaustiveness:** structural matches by closed-variant coverage; condition
   matches when the solver proves the arms total, else a `_` arm is required.
+  Float condition-arms can never be proven total (NaN satisfies no ordering
+  comparison), so a `match` over float conditions always needs `_` (ADR-0006).
 - **Binding vs variant:** a lowercase `IDENTIFIER` binds; one that resolves to a
   variant/constant matches it (Capitalized-variants convention). No `@`-bindings.
 
@@ -321,6 +348,11 @@ Notes:
 - The `else` on a loop is the **completion value** — it runs (and supplies the
   loop-expression's value) when the loop ends *without* `break`. Not Python's
   "else": it is what makes a non-breaking loop usable as a value.
+- **Loop verification (v1):** `for i in 0..n` hands the solver `0 <= i < n`
+  structurally (the `Range` loop-bound fact), so index bounds prove away with no
+  annotation; **loop-carried** properties (accumulators, built-up results) have
+  no static-invariant mechanism in v1 and degrade to runtime checks via the
+  trichotomy (ADR-0002). Optional `invariant` clauses are deferred post-v1.
 - Loop labels (labeled `break`/`continue`) are deferred post-v1.
 
 ## 9. Modules, imports, FFI, attributes
@@ -378,7 +410,7 @@ Reserved keywords:
 ```
 fix let fun measure pure static public internal struct class enum interface impl
 type init self Self if else while for in match break continue return where
-dynamic as import module extern unchecked true false void it
+dynamic as import module extern unchecked true false void it decreases
 I8 I16 I32 I64 U8 U16 U32 U64 F16 F32 F64 Bool Void Char
 ```
 (Raw/multiline strings and Unicode identifiers are deferred post-v1.)

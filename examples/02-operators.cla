@@ -1,0 +1,80 @@
+// 02-operators.cla — every operator, and the semantics we pinned down.
+//
+// Exercises: arithmetic (+ - * / %), wrapping (+% -% *%), bitwise (& | ^ ~),
+// shifts (<< >>), comparison (== != < <= > >=), logical (&& || !), the
+// compound-assignment family, ranges (.. ..=), and `as` casts. Comments note the
+// decided semantics: checked overflow, truncating division, remainder sign,
+// shift-amount constraints, signed/unsigned shift, and cross-type comparison.
+//
+// Lines tagged "// COMPILE ERROR" are intentionally illegal.
+
+import std::io::{println, IoError};
+
+fun main() -> Result<Void, IoError> {
+    // ---- arithmetic: exact in Int; overflow re-imposes the target range -----
+    fix sum  = 40 + 2;            // 42 (I64 by default)
+    fix diff = 100 - 58;          // 42
+    fix prod = 6 * 7;             // 42
+    // fix bad: I8 = 100 + 100;   // COMPILE ERROR: 200 ⊄ -128..127 (Refuted)
+
+    // ---- division & modulo: truncate toward zero; `%` follows the dividend --
+    fix q1 = -7 / 2;              // -3 (truncates toward zero, not floor -4)
+    fix r1 = -7 % 2;              // -1 (sign follows dividend; (q1*2)+r1 == -7)
+    fix r2 = 7 % -2;              //  1
+    fix d  = 84 / 2;              // 42 (b != 0 proven)
+    // fix z = 1 / 0;             // COMPILE ERROR: 0 != 0 is Refuted
+    fix me = (-7).rem_euclid(2);  //  1 — Euclidean (non-negative) modulo from core
+
+    // ---- wrapping: explicit modular arithmetic, never traps -----------------
+    fix w1: U8 = 250u8 +% 10u8;   //   4 (260 mod 256; plain `+` here would trap)
+    fix w2: U8 = 5u8 -% 10u8;     // 251 (wraps below 0)
+    fix w3: U8 = 200u8 *% 2u8;    // 144 (400 mod 256)
+
+    // ---- bitwise: bit semantics, reasoned via the bitvector bridge ----------
+    fix band = 0b1100 & 0b1010;   // 0b1000 (8)
+    fix bor  = 0b1100 | 0b1010;   // 0b1110 (14)
+    fix bxor = 0b1100 ^ 0b1010;   // 0b0110 (6)
+    fix bnot: U8 = ~0x0Fu8;       // 0xF0 (240) — flips all 8 bits of the U8
+
+    // ---- shifts: amount must be in range; >> arithmetic on signed -----------
+    fix shl   = 1 << 4;           // 16 (amount 4 < 64; high bits would just drop)
+    fix shr_u = 0xF0u8 >> 4;      // 0x0F — logical (zero-fill), the value is unsigned
+    fix shr_s = (-16) >> 2;       // -4  — arithmetic (sign-extend), the value is signed
+    // fix oops = 1i32 << 32;     // COMPILE ERROR: 32 ⊄ 0..32 (shift amount Refuted)
+
+    // ---- comparison: cross-type allowed, evaluated in Int -------------------
+    fix neg: I32 = -1;
+    fix big: U32 = 4_000_000_000u32;
+    fix lt = neg < big;           // true — the real math (C wrongly gives false here)
+    fix le = 1 <= 1;              // true
+    fix gt = 3 > 2;               // true
+    fix ge = 2 >= 2;              // true
+    fix eq = 42 == 42;            // true
+    fix ne = 1 != 2;              // true
+
+    // ---- logical: short-circuit, Bool only ----------------------------------
+    fix andv = (1 < 2) && (3 < 4);  // true  (RHS evaluated only if LHS true)
+    fix orv  = (1 < 2) || (3 > 4);  // true  (RHS skipped — short-circuit)
+    fix notv = !false;              // true
+
+    // ---- compound assignment (statements; each has type Void) ---------------
+    let acc = 0;
+    acc += 10;  acc -= 3;  acc *= 2;  acc /= 2;  acc %= 5;
+    acc &= 0b110;  acc |= 0b001;  acc ^= 0b010;  acc <<= 1;  acc >>= 1;
+
+    // ---- ranges as first-class values (`..` half-open, `..=` inclusive) ------
+    fix r_excl  = 0..10;          // 0,1,…,9 — the canonical iterator (Range)
+    fix r_incl  = 0..=10;         // 0,1,…,10
+    fix r_empty = 5..5;           // empty (a >= b); a reversed `10..0` is empty too
+
+    // ---- `as` casts: explicit, each carrying a range/representability check --
+    fix wide: I64 = 42;
+    fix narrow = wide as I8;      // 42 ∈ -128..127 — proven (the binding fixes wide == 42)
+    // fix trunc = 300i64 as U8;  // COMPILE ERROR: 300 ⊄ 0..256 (Refuted)
+    fix asFloat = 7 as F64;       // 7.0
+
+    println(lt)?;
+    println(q1)?;
+    println(shr_s)?;
+    return Ok(void);
+}

@@ -7,9 +7,16 @@ Two linked decisions about resolution and the numeric model:
 1. **Overload dispatch ignores refinements.** Constructors (`init`) and any
    overloaded function/method are resolved purely on their **base-type
    signature** — the ordered list of parameter base types, with refinement
-   predicates erased. No two overloads may share a base-type signature
-   (collisions are rejected at declaration). Parameters may still carry
-   refinements as preconditions; they simply do not participate in dispatch.
+   predicates erased. No two overloads may have **unifiable** base-type signatures — signatures with a
+   common instance, checked by first-order unification **at declaration** in the
+   defining package (so it stays modular under the ship-as-IR generics of
+   ADR-0007). Syntactic equality is not enough once generics enter: `(T)` unifies
+   with `(I32)`, so a generic `f<T>(x: T)` and a concrete `f(x: I32)` collide
+   (after monomorphization `f<I32>` *is* `(I32)`) and are rejected — there is no
+   most-specific tie-breaking. Interface bounds, like refinements, are not
+   dispatch keys (`f<T: Ord>` and `f<T: Hash>` collide on `(T)`). Parameters may
+   still carry refinements as preconditions; they simply do not participate in
+   dispatch.
 
 2. **No implicit conversions.** All type conversions are explicit casts
    (`x as I64`). There is no implicit numeric widening or coercion.
@@ -32,3 +39,7 @@ that carries a provable obligation the solver can check.
   the precondition differently.
 - Every cast is a checkpoint that may carry a range/representability obligation.
 - Verbose where C-like code relied on silent promotion — accepted on purpose.
+- **Generic + specialization overload pairs are forbidden:** a generic `f<T>`
+  plus a hand-specialized `f(I32)` overlap on `(I32)` and are rejected. Specialize
+  via an interface method or an in-body branch, not an overload. (Surprising for
+  Rust/C++ users who expect specialization — hence stated.)

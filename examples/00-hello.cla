@@ -1,0 +1,33 @@
+// 00-hello.cla — the smallest real Clause program.
+//
+// Exercises: the program entry point (`main`), the `core`/`std` package split
+// with explicit `std` imports, the two-channel error model on I/O, must-use
+// `Result` with `?`-propagation, and how a block-bodied function yields its
+// value. Every line here is hand-verified against docs/grammar.md and the ADRs.
+
+// I/O lives in the hosted `std` package and is ALWAYS imported explicitly — only
+// `core::prelude` (types + fundamental interfaces) is auto-imported (ADR-0017).
+// We pull in `println` and the error type it can return. `IoError` must be named
+// here too, since we mention it in `main`'s signature.
+import std::io::{println, IoError};
+
+// `main` is the entry point: a distinguished function in a binary package's root
+// module. v1 accepts two signatures — `-> Void`, or `-> Result<Void, E>` to
+// enable top-level `?`. We use the Result form so we can propagate I/O errors.
+fun main() -> Result<Void, IoError> {
+    // Every I/O operation returns `Result` (ADR-0008: a write is world-dependent
+    // and can fail — EPIPE on a closed pipe, ENOSPC on redirected output — so it
+    // is never a trap). `Result` is must-use: we may not silently drop it.
+    //
+    // `?` discharges that obligation: on `Err` it returns the error out of
+    // `main` (the runtime prints it and exits non-zero); on `Ok` it yields the
+    // `Void` payload and execution continues.
+    println("Hello, world!")?;
+
+    // A block-bodied function produces its value with `return` — never a tail
+    // `<-`, which only yields blocks used *as values* (a binding RHS, or an
+    // if/match/loop-`else` branch). See grammar §1.
+    //
+    // `void` is the unit value (type `Void`); `Ok(void)` is the success result.
+    return Ok(void);
+}

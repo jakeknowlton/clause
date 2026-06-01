@@ -96,8 +96,10 @@ Four kinds of user-defined type:
   init); may carry an **invariant** checked at each construction/write site (sound
   via value semantics). The ABI interchange type for C.
 - **`class`** — reference type, ARC-managed, fields private by default; may carry
-  an **invariant** established by a constructor and maintained at public-method
-  boundaries. Constructors are unnamed `init`s dispatched by base-type signature.
+  an **invariant** established by each `init` and maintained at public-method
+  boundaries — an implicit pre/postcondition of public methods, enforced at every
+  public-method call (`self`-calls included) to stay sound under reentrancy
+  [ADR-0016]. Constructors are unnamed `init`s dispatched by base-type signature.
 - **`enum`** — sum/tagged-union with pattern matching; basis for `Option`/`Result`;
   exhaustiveness is a proof.
 - **`interface`** — the *only* source of subtype polymorphism. **No implementation
@@ -128,13 +130,25 @@ is just the target type's range refinement re-imposed, discharged by the usual
 trichotomy (proven away in hot loops, trapped otherwise). Explicit `+%`/`-%`/`*%`
 opt into wrapping. Silent wraparound is eliminated by default.
 
+The solver's domain is **linear integer arithmetic over `Int`** — which keeps
+specs width-agnostic and overflow separable — with a **bitvector bridge** for the
+bit-level operators (`&`/`|`/`^`/`~`/`<<`/`>>`, `+%`/`-%`/`*%`) that LIA cannot
+express. `Int`/`Nat` are **logical, compile-time-only** types with no runtime
+representation; every runtime integer is fixed-width, and arbitrary precision is
+an opt-in `BigInt` standard-library type [ADR-0006]. When a measure-bearing
+constraint is left as a runtime check, the measure is evaluated in trapping
+machine arithmetic — never bignum, never wrapping [ADR-0014]. Floating-point
+(`F16`/`F32`/`F64`) sits **outside** this static core in v1 — not range-refined
+and IEEE-total (inf/NaN, no trap), so float constraints are runtime-checked
+[ADR-0006].
+
 ## 5. Errors: two channels
 
 [ADR-0008] **Recoverable, world-dependent** failures are **`Result<T, E>`** values
 with `?`-propagation — no exceptions (the solver never models non-local exits).
 **Proof failures** (failed runtime checks, overflow)
 **trap/abort**, non-catchably. The dividing line: *preventable-by-proof ⇒
-constraint/trap* (`xs[i]`, `a/b`, casts); *world-dependent ⇒ Result* (I/O,
+constraint/trap* (`xs[i]`, integer `a/b`, casts); *world-dependent ⇒ Result* (I/O,
 parsing). Clause thus replaces much `Option`/`Result` ceremony with proofs.
 
 ## 6. Memory
@@ -163,9 +177,11 @@ regions/arenas, and verifier-assisted refcount elision.
 A **module** is a file (with optional nested `module` blocks); modules form a tree
 addressed by `::`. A **package** is the build/distribution unit with a manifest.
 **Three-tier visibility:** `public` / `internal` / private-default; `import` for
-imports. Exported signatures carry their constraints (part of the API contract). A
-**tiny intrinsic core** is built in; the rest of the standard library (collections,
-iterators, …) is written in Clause, dogfooding self-hosting and constraints.
+imports. Exported signatures carry their constraints (part of the API contract). The library splits into **`core`** (intrinsic, compiler-shipped, freestanding =
+no-OS) and **`std`** (hosted, written in Clause); only **`core::prelude`** is
+auto-imported, while `std` (including I/O) is always an explicit `import`
+[ADR-0017]. A **tiny intrinsic core** is built in; the rest is written in Clause,
+dogfooding self-hosting and constraints.
 Strings are immutable UTF-8, ARC-managed, byte-indexed with constraints. Slices
 are ARC-retaining views — **no lifetimes**.
 
@@ -200,6 +216,14 @@ object model anticipates atomic/handoff refcounting for shared immutable data.
 - A backup cycle-collector for ARC.
 - The concrete concurrency model (actors vs CSP vs async) [ADR-0012].
 - Auto-binding generation from C headers [ADR-0010].
+- Optional loop-`invariant` annotations — v1 proves index bounds via `Range`
+  facts and degrades loop-carried properties to runtime checks (the trichotomy).
+- Purity-polymorphism for higher-order functions (v1 has a one-bit purity arrow;
+  "pure iff the callback is pure" needs effect variables) [ADR-0015].
+- Faithful floating-point reasoning via the SMT FP theory (QF_FP); v1 keeps
+  floats outside the static core [ADR-0006].
+- String interpolation in string literals (v1 formats via the `Show` interface +
+  `+` / `StringBuilder`; there are no `printf`-style variadics).
 
 ## Decision index
 
@@ -216,3 +240,8 @@ object model anticipates atomic/handoff refcounting for shared immutable data.
 - ADR-0011 — Compiler architecture (staged bootstrap, typed MIR, layered solver)
 - ADR-0012 — Concurrency direction (message-passing, deferred)
 - ADR-0013 — No `assume` mode (every constraint proven or runtime-checked)
+- ADR-0014 — Measure runtime-evaluation in trapping machine arithmetic (no bignum)
+- ADR-0015 — `pure` is a checked, transitively-verified effect annotation
+- ADR-0016 — Class-invariant boundary discipline (implicit pre/post of public methods)
+- ADR-0017 — Package architecture (`core`/`std`; only `core::prelude` auto-imported)
+- ADR-0018 — Integer operator semantics (truncating div/mod, shift rules)

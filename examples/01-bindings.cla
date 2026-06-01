@@ -1,0 +1,75 @@
+// 01-bindings.cla — bindings, the primitive tower, and every literal form.
+//
+// Exercises: `fix` vs `let`, inference vs annotation, all primitives
+// (I8..I64, U8..U64, F16/F32/F64, Bool, Char, Void), every integer base + float
+// form + numeric suffix, char/string escapes, context-polymorphic literals with
+// the I64/F64 unconstrained defaults, cross-type integer comparison, and a
+// mutable binding that carries a re-checked constraint.
+//
+// Lines tagged "// COMPILE ERROR" are intentionally illegal and shown only in
+// comments — they document what the rules reject.
+
+import std::io::{println, IoError};
+
+fun main() -> Result<Void, IoError> {
+    // ---- fix vs let -------------------------------------------------------
+    fix greeting = "hello";          // `fix`: immutable, the idiomatic default
+    let counter = 0;                 // `let`: mutable
+    counter = counter + 1;           // ok — `counter` is mutable
+    // greeting = "hi";              // COMPILE ERROR: `fix` bindings can't be reassigned
+
+    // ---- inference & the unconstrained defaults ---------------------------
+    fix big = 1_000_000 * 1_000_000; // no context -> integer literal default I64
+                                     //   (10^12 fits I64; would be Refuted as I32)
+    fix ratio = 3.5;                 // no context -> float literal default F64
+
+    // ---- context-polymorphic literals (range-checked by the trichotomy) ---
+    fix small: U8  = 200;            // 200 in 0..256 -> ok
+    fix offset: I16 = -1000;         // -1000 in I16 range -> ok
+    // fix bad: U8 = 300;            // COMPILE ERROR: 300 Refuted against 0..256
+    // fix neg: U8 = -1;             // COMPILE ERROR: -1  Refuted against 0..256
+
+    // ---- the integer tower & every literal base ---------------------------
+    fix a: I8  = -128;               // decimal; sign folds into the literal (valid I8 min)
+    fix b: U8  = 0xFF;               // hex   -> 255
+    fix c: U16 = 0o777;              // octal -> 511
+    fix d: U32 = 0b1010_1010;        // binary, with digit separators -> 170
+    fix e: I64 = 9_223_372_036_854_775_807;   // I64 max
+    fix f = 255u8;                   // suffix pins U8 without an annotation
+    fix g = 1_000i64;                // suffix pins I64
+
+    // ---- the float tower --------------------------------------------------
+    fix h: F16 = 1.5;
+    fix i: F32 = 3.14159;
+    fix j: F64 = 2.718281828;
+    fix k = 6.022e23;                // exponent form -> F64
+    fix l = 1.0f32;                  // suffix pins F32
+    fix m = 2.5e-3f64;               // exponent + suffix
+
+    // ---- Bool, Char, Void -------------------------------------------------
+    fix yes: Bool = true;
+    fix no = false;                  // inferred Bool
+    fix letter: Char = 'A';          // a Unicode scalar value
+    fix newline = '\n';              // simple escape
+    fix smile = '\u{1F600}';         // unicode escape (grinning face)
+    fix quote = '\'';                // escaped single quote
+    fix unit: Void = void;           // the unit value
+
+    // ---- a mutable binding carrying a constraint --------------------------
+    // The predicate is re-checked at every assignment (ADR-0002). `limit` is
+    // immutable, so this dependent predicate is sound with no aliasing analysis.
+    fix limit = 10;                  // I64
+    let count: U32 where count < limit = 0;   // U32 `count` vs I64 `limit`:
+                                              //   cross-type comparison is legal
+                                              //   and evaluated in Int (ADR-0006)
+    count = 9;                       // ok — 9 < 10 proven
+    // count = 10;                   // would fail: 10 < 10 is false
+
+    // ---- show a few values (println is generic over `Show`) ---------------
+    println(greeting)?;              // String
+    println(big)?;                   // I64
+    println(ratio)?;                 // F64
+    println(letter)?;                // Char
+    println(yes)?;                   // Bool
+    return Ok(void);
+}

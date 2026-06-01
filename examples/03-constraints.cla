@@ -1,0 +1,71 @@
+// 03-constraints.cla — refinements: the `where` sugar, the set-builder form,
+// named refined types, and the static vs dynamic verification modes.
+//
+// Exercises: `where` on bindings, the `{ v: T | p }` set-builder, `type` aliases
+// that add a refinement (with the `it` binder), the three ways constraints
+// combine, dependent predicates over immutable values (ADR-0002), entailment-
+// based subtyping, the `static` (default) vs `dynamic` modes, and the trichotomy.
+//
+// Forward references: `pure` is detailed in 04, the `while` loop in 10 — here
+// they only exist to give the `dynamic` mode a non-measure function to call.
+
+import std::io::{println, IoError};
+
+// A `pure` predicate the solver does NOT reason about: it loops, so it can never
+// be a `measure` (ADR-0003) and may appear ONLY in a `dynamic` constraint.
+pure fun is_square(n: I64) -> Bool {
+    let i = 0;
+    while i * i <= n {
+        if i * i == n { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---- named refined types: three ways to combine constraints --------------
+// In an anonymous position the value is bound by the pronoun `it`.
+type Positive = I64 where it > 0;                    // a single constraint
+type Percent  = I64 where it >= 0 where it <= 100;   // repeated `where` conjoins
+type Even     = I64 where it % 2 == 0 && it >= 0;    // `&&` combines within ONE predicate
+type Digit    = { v: I64 | 0 <= v, v <= 9 };         // set-builder; `,` separates constraints
+type NonNeg   = { v: I64 | v >= 0 };                 // set-builder, the canonical form
+
+fun main() -> Result<Void, IoError> {
+    // ---- where on a binding; the declared name is the binder ----------------
+    fix age: I64 where age >= 0 = 30;        // proven from the literal 30
+
+    // ---- using named refined types ------------------------------------------
+    fix score: Percent = 87;                 // 0 <= 87 <= 100 proven
+    fix d: Digit = 7;                        // 0 <= 7 <= 9 proven
+    // fix bad: Percent = 150;               // COMPILE ERROR: 150 <= 100 is Refuted
+
+    // ---- entailment-based subtyping (the predicate, not the spelling) -------
+    // `strong` has the stronger predicate (> 5), so it satisfies a `Positive`
+    // requirement (> 0): the solver proves 5 < v  =>  0 < v.
+    fix strong: I64 where strong > 5 = 10;
+    fix p: Positive = strong;                // ok — 10 > 5 entails 10 > 0
+
+    // ---- dependent predicate over an IMMUTABLE value (ADR-0002) -------------
+    fix limit: Positive = 100;
+    fix used: I64 where used <= limit = 40;  // references immutable `limit` — sound
+                                             // with no aliasing analysis
+
+    // ---- conjoined constraints with mixed modes -----------------------------
+    // Each `where` is its own constraint with its own mode. `static` (default) is
+    // proven where possible; `dynamic` is always a runtime check and may call any
+    // `pure` function. Subtyping ignores the modes — it uses only the predicate.
+    fix n: I64 where n > 0
+                 where dynamic is_square(n) = 16;   // n > 0 static; is_square dynamic
+
+    // ---- the trichotomy (ADR-0001) ------------------------------------------
+    //   Proven  -> no runtime cost      (every binding above, from its literal)
+    //   Refuted -> compile error        (the `Percent = 150` line)
+    //   Unknown -> a runtime check that traps — e.g. a value whose refinement the
+    //              solver can neither prove nor refute (read from input, returned
+    //              by an under-specified function, …). It is checked, never trusted.
+
+    println(score)?;
+    println(p)?;
+    println(n)?;
+    return Ok(void);
+}

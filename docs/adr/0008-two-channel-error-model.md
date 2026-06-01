@@ -19,7 +19,7 @@ obligation on the inputs* is a **constraint** (trap on violation); a failure tha
 
 | Operation | Mechanism |
 |---|---|
-| `xs[i]`, `a / b`, `x as U8` | constraint (provable; trap if unproven+violated) |
+| `xs[i]`, **integer** `a / b`, `x as U8` | constraint (provable; trap if unproven+violated) |
 | `File.open`, `parse(s)` | `Result<T, E>` (world-dependent) |
 
 ## Why
@@ -37,3 +37,6 @@ a primary ergonomic payoff of the constraint system.
 - `Result` is reserved for genuinely external failures.
 - Traps are unrecoverable; long-running services must avoid reachable traps by
   proving them away or handling the condition before the trapping op.
+- **Floats are the exception to the trap side:** IEEE float `/`, overflow, and
+  domain errors are *total* (±inf/NaN, no trap), so they carry no constraint —
+  only *integer* division/overflow/indexing do (ADR-0006).
